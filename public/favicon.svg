@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Exact soft pastel gradient from zentry-parent-dashboard / zentryos launcher -->
+    <linearGradient id="prospeccGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0c3fc"/>
+      <stop offset="45%" stop-color="#cebafe"/>
+      <stop offset="80%" stop-color="#c4b5fd"/>
+      <stop offset="100%" stop-color="#b5dffc"/>
+    </linearGradient>
+
+    <filter id="softGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#8b5cf6" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="512" height="512" rx="112" fill="url(#prospeccGrad)"/>
+
+  <!-- Minimalist White Squircle Inset Border (matches parent-dashboard and launcher icon) -->
+  <rect x="28" y="28" width="456" height="456" rx="92" fill="none" stroke="#ffffff" stroke-width="12" stroke-opacity="0.35"/>
+
+  <!-- Clean, bold, elegant PR Monogram in Pure White -->
+  <g filter="url(#softGlow)" fill="#ffffff">
+    <!-- "P" Glyph (Geometric Monogram) -->
+    <path d="
+      M 105 160 
+      H 197 
+      C 232 160 254 180 254 218 
+      C 254 256 232 276 197 276 
+      H 155 
+      V 352 
+      H 105 
+      Z 
+      M 155 208 
+      V 228 
+      H 192 
+      C 205 228 211 222 211 218 
+      C 211 214 205 208 192 208 
+      Z
+    "/>
+
+    <!-- "R" Glyph (Geometric Monogram) -->
+    <path d="
+      M 268 160 
+      H 360 
+      C 395 160 417 180 417 218 
+      C 417 248 400 268 370 274 
+      L 420 352 
+      H 362 
+      L 318 280 
+      H 318 
+      V 352 
+      H 268 
+      Z 
+      M 318 208 
+      V 234 
+      H 355 
+      C 368 234 374 228 374 221 
+      C 374 214 368 208 355 208 
+      Z
+    "/>
+  </g>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "short_name": "Zentry Prospecc",
+  "name": "Zentry Prospecc",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#FFFFFF",
+  "theme_color": "#4A90E2",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Zentry Prospecc - Herramienta de Prospección en Frío y Control de Leads"
+}
