@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "zentryos"
+  },
+  "targets": {
+    "zentryos": {
+      "hosting": {
+        "prospecc": [
+          "zentry-prospecc"
+        ]
+      }
+    }
+  }
+}

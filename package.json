@@ -1,0 +1,30 @@
+{
+  "name": "zentry-prospecc",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Zentry Prospect & CRM — Herramienta de Prospección en Frío y Control de Leads",
+  "scripts": {
+    "dev": "vite --port 5182 --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5182"
+  },
+  "dependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "canvas-confetti": "^1.9.4",
+    "firebase": "^12.16.0",
+    "lucide-react": "^1.25.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}
