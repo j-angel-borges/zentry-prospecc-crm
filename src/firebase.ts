@@ -1,5 +1,22 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, serverTimestamp, onSnapshot, query, orderBy, Timestamp } from 'firebase/firestore';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  Timestamp
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyD36pVBqXzjlxSXmQD0LhVvJpQtvEp1xmk",
@@ -15,4 +32,20 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const LEADS_COLLECTION = 'leads_expo_maternidad';
 
-export { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, serverTimestamp, onSnapshot, query, orderBy, Timestamp };
+export {
+  collection,
+  addDoc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  Timestamp
+};

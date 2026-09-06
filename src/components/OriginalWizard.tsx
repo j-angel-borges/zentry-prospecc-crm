@@ -1,18 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { db, collection, addDoc, serverTimestamp, LEADS_COLLECTION } from '../firebase';
-import { LeadData } from '../data/realLeads';
+import { LeadData, getSavedSheetTabs, LS_ACTIVE_SHEET_TAB } from '../data/realLeads';
+import { subscribeToCloudTabs, addCloudTab, saveCloudLead } from '../services/cloudCrm';
 
 interface Props {
   onLeadSaved: (newLead: LeadData) => void;
   totalLeadsCount: number;
 }
 
-export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }) => {
-  const GOAL_LEADS = 120;
+export const OriginalWizard: React.FC<Props> = ({ onLeadSaved }) => {
   const [currentSlide, setCurrentSlide] = useState<string>('slide0');
   const [prevSlide, setPrevSlide] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [showSuccessToast, setShowSuccessToast] = useState<boolean>(false);
+  const [contactError, setContactError] = useState<string | null>(null);
+
+  // Tabs de Pestañas sincronizadas en la nube
+  const [sheetTabs, setSheetTabs] = useState<string[]>(() => getSavedSheetTabs());
+  const [selectedTab, setSelectedTab] = useState<string>(() => {
+    try {
+      const active = localStorage.getItem(LS_ACTIVE_SHEET_TAB);
+      return active || 'Expo M (JA)';
+    } catch {
+      return 'Expo M (JA)';
+    }
+  });
+  const [isCustomTab, setIsCustomTab] = useState<boolean>(false);
+  const [customTabName, setCustomTabName] = useState<string>('');
 
   // Form State
   const [nivelPreocupacion, setNivelPreocupacion] = useState<number | null>(null);
@@ -26,6 +40,14 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
   const [celular, setCelular] = useState<string>('');
   const [distrito, setDistrito] = useState<string>('');
   const [observaciones, setObservaciones] = useState<string>('');
+
+  // Escucha de pestañas en tiempo real desde la nube (Firestore)
+  useEffect(() => {
+    const unsubscribe = subscribeToCloudTabs((cloudTabs) => {
+      setSheetTabs(cloudTabs);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const goToSlide = (nextSlide: string) => {
     setPrevSlide(currentSlide);
@@ -50,6 +72,9 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
     setCelular('');
     setDistrito('');
     setObservaciones('');
+    setContactError(null);
+    setIsCustomTab(false);
+    setCustomTabName('');
     setIsSubmitting(false);
     goToSlide('slide0');
   };
@@ -59,11 +84,8 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
     goToSlide('slide2');
   };
 
+  // Pregunta 2: Avanza fluidamente sin bloquear con alertas
   const handleConocimientoDanoNext = () => {
-    if (!conocimientoDano.trim()) {
-      alert('Por favor escribe tu respuesta.');
-      return;
-    }
     goToSlide('slide3');
   };
 
@@ -84,13 +106,10 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
     goToSlide('slide5');
   };
 
+  // Pregunta 4c: Avanza fluidamente sin bloquear con alertas
   const handleCondTextNext = (question: string) => {
-    if (!inputEscuela.trim()) {
-      alert('Por favor escribe tu respuesta.');
-      return;
-    }
     setPreguntaCondicional(question);
-    setRespuestaCondicional(inputEscuela.trim());
+    setRespuestaCondicional(inputEscuela.trim() || 'Sin comentarios');
     goToSlide('slide5');
   };
 
@@ -100,14 +119,15 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
   };
 
   const handleContactNext = () => {
-    if (!nombreMadre.trim() || !celular.trim() || !distrito.trim()) {
-      alert('Por favor, completa todos los campos.');
+    if (!nombreMadre.trim() || !celular.trim()) {
+      setContactError('Por favor ingresa al menos el Nombre y Celular.');
       return;
     }
     if (celular.trim().length < 6) {
-      alert('Ingresa un celular válido.');
+      setContactError('Ingresa un número de celular válido.');
       return;
     }
+    setContactError(null);
     goToSlide('slide7');
   };
 
@@ -117,29 +137,42 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
     const formattedDate = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const generatedId = `id-${Math.random().toString(16).substring(2, 10)}`;
 
+    // Resolver pestaña de destino
+    let finalTab = selectedTab;
+    if (isCustomTab && customTabName.trim() !== '') {
+      finalTab = customTabName.trim();
+      try {
+        await addCloudTab(finalTab);
+      } catch (e) {
+        console.warn('Error guardando pestaña personalizada:', e);
+      }
+    }
+
+    try {
+      localStorage.setItem(LS_ACTIVE_SHEET_TAB, finalTab);
+    } catch (e) {}
+
     const newLead: LeadData = {
       id: generatedId,
       timestamp: formattedDate,
       nivelPreocupacion: nivelPreocupacion || 10,
-      conocimientoDano: conocimientoDano.trim(),
+      conocimientoDano: conocimientoDano.trim() || 'No especifica',
       edadHijos: edadHijos,
       preguntaCondicional: preguntaCondicional,
       respuestaCondicional: respuestaCondicional,
       interesSolucion: interesSolucion,
       nombreMadre: nombreMadre.trim(),
       celular: celular.trim(),
-      distrito: distrito.trim(),
+      distrito: distrito.trim() || 'No especifica',
       observaciones: observaciones.trim(),
       gestCall: '',
       obserCalls: '',
+      sheetTab: finalTab,
       estadoCrm: 'nuevo'
     };
 
     try {
-      await addDoc(collection(db, LEADS_COLLECTION), {
-        ...newLead,
-        createdAt: serverTimestamp()
-      });
+      await saveCloudLead(newLead);
     } catch (err) {
       console.warn("No se pudo escribir en Firestore, guardando localmente:", err);
     }
@@ -150,17 +183,44 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         spread: 70,
         origin: { y: 0.6 }
       });
-    } catch (e) {
-      // Confetti fallback
-    }
+    } catch (e) {}
 
-    alert('¡Lead guardado con éxito en Firestore!');
     onLeadSaved(newLead);
-    resetForm();
+    setShowSuccessToast(true);
+
+    setTimeout(() => {
+      setShowSuccessToast(false);
+      resetForm();
+    }, 2200);
   };
 
   return (
     <>
+      {/* Toast no intrusivo de éxito */}
+      {showSuccessToast && (
+        <div style={{
+          position: 'fixed',
+          top: '30px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, #10B981, #059669)',
+          color: 'white',
+          padding: '14px 24px',
+          borderRadius: '16px',
+          boxShadow: '0 10px 25px rgba(16, 185, 129, 0.4)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '1rem',
+          fontWeight: 700,
+          animation: 'gentle-bounce 0.5s ease'
+        }}>
+          <span>🎉</span>
+          <span>¡Prospecto guardado con éxito!</span>
+        </div>
+      )}
+
       {/* Slide 0: Portada */}
       <div className={getSlideClass('slide0')} id="slide0">
         <div className="icon-zentry"></div>
@@ -168,6 +228,61 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         <p className="original-subtitle">
           Descubre ZentryOS: El primer sistema operativo que bloquea la adicción algorítmica y potencia el aprendizaje.
         </p>
+
+        {/* Selector rápido de Pestaña en portada */}
+        <div style={{ margin: '15px 0 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>Destino:</span>
+          <select
+            value={isCustomTab ? '__NEW__' : selectedTab}
+            onChange={(e) => {
+              if (e.target.value === '__NEW__') {
+                setIsCustomTab(true);
+              } else {
+                setIsCustomTab(false);
+                setSelectedTab(e.target.value);
+                try { localStorage.setItem(LS_ACTIVE_SHEET_TAB, e.target.value); } catch (e) {}
+              }
+            }}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '20px',
+              border: '1.5px solid #CBD5E1',
+              background: 'rgba(255,255,255,0.85)',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              color: '#2563EB',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            {sheetTabs.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            <option value="__NEW__">+ ✍️ Escribir nueva pestaña...</option>
+          </select>
+        </div>
+
+        {isCustomTab && (
+          <div style={{ maxWidth: '320px', margin: '0 auto 15px' }}>
+            <input
+              type="text"
+              value={customTabName}
+              onChange={(e) => setCustomTabName(e.target.value)}
+              placeholder="Nombre de la nueva pestaña..."
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '10px',
+                border: '2px solid #2563EB',
+                fontSize: '0.85rem',
+                outline: 'none',
+                background: 'white'
+              }}
+              autoFocus
+            />
+          </div>
+        )}
+
         <button className="btn-original" onClick={() => goToSlide('slide1')}>
           Evaluar Riesgo
         </button>
@@ -191,7 +306,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         </div>
       </div>
 
-      {/* Slide 2: Daño Percibido */}
+      {/* Slide 2: Daño Percibido (Texto Opcional) */}
       <div className={getSlideClass('slide2')} id="slide2">
         <p className="original-question">
           ¿Ha escuchado alguna vez del daño que puede generar el consumo dentro de los dispositivos para niños y adolescentes?
@@ -202,7 +317,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
             value={conocimientoDano}
             onChange={(e) => setConocimientoDano(e.target.value)}
             className="form-textarea-original"
-            placeholder="Escribe tu respuesta aquí..."
+            placeholder="Escribe tu respuesta aquí (o pulsa siguiente)..."
           />
         </div>
         <button className="btn-original" onClick={handleConocimientoDanoNext}>
@@ -246,7 +361,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         </button>
       </div>
 
-      {/* Slide 4c: Ambas */}
+      {/* Slide 4c: Ambas (Texto Opcional) */}
       <div className={getSlideClass('slide4c')} id="slide4c">
         <p className="original-question">¿Creen que la estructura base de la escuela tradicional garantiza el futuro de sus hijos?</p>
         <div className="form-group-original">
@@ -255,7 +370,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
             value={inputEscuela}
             onChange={(e) => setInputEscuela(e.target.value)}
             className="form-textarea-original"
-            placeholder="Escribe tu opinión..."
+            placeholder="Escribe tu opinión (o pulsa siguiente)..."
           />
         </div>
         <button className="btn-original" onClick={() => handleCondTextNext('¿Estructura tradicional garantiza futuro?')}>
@@ -281,13 +396,31 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         <h2 className="original-title">Último paso</h2>
         <p className="original-subtitle">Registra tus datos de contacto.</p>
 
+        {contactError && (
+          <div style={{
+            background: '#FEF2F2',
+            color: '#DC2626',
+            padding: '8px 14px',
+            borderRadius: '8px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            marginBottom: '14px',
+            border: '1px solid #FECACA'
+          }}>
+            ⚠️ {contactError}
+          </div>
+        )}
+
         <div className="form-group-original">
           <label>Nombre Completo</label>
           <input
             type="text"
             id="inputNombre"
             value={nombreMadre}
-            onChange={(e) => setNombreMadre(e.target.value)}
+            onChange={(e) => {
+              setNombreMadre(e.target.value);
+              if (contactError) setContactError(null);
+            }}
             className="form-control-original"
             placeholder="Ej. María Pérez"
             required
@@ -300,7 +433,10 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
             type="tel"
             id="inputCelular"
             value={celular}
-            onChange={(e) => setCelular(e.target.value.replace(/[^0-9]/g, ''))}
+            onChange={(e) => {
+              setCelular(e.target.value.replace(/[^0-9]/g, ''));
+              if (contactError) setContactError(null);
+            }}
             className="form-control-original"
             placeholder="Solo números"
             required
@@ -315,8 +451,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
             value={distrito}
             onChange={(e) => setDistrito(e.target.value)}
             className="form-control-original"
-            placeholder="Tu distrito"
-            required
+            placeholder="Tu distrito (opcional)"
           />
         </div>
 
@@ -325,7 +460,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
         </button>
       </div>
 
-      {/* Slide 7: vCard y Observaciones */}
+      {/* Slide 7: vCard, Observaciones y Pestaña de Destino */}
       <div className={`${getSlideClass('slide7')} slide-scrollable`} id="slide7">
         <h1 className="original-title" style={{ marginTop: '20px' }}>¡Casi listo!</h1>
         <p className="original-subtitle" style={{ marginBottom: '10px' }}>
@@ -338,7 +473,7 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
           alt="QR vCard"
         />
 
-        <div className="form-group-original" style={{ width: '100%', maxWidth: '500px', marginTop: '20px' }}>
+        <div className="form-group-original" style={{ width: '100%', maxWidth: '500px', marginTop: '15px' }}>
           <label style={{ textAlign: 'center' }}>Observaciones Adicionales (Post-Charla)</label>
           <textarea
             id="inputObservaciones"
@@ -347,6 +482,49 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved, totalLeadsCount }
             className="form-textarea-original"
             placeholder="Anota cualquier detalle relevante sobre este lead..."
           />
+        </div>
+
+        {/* Selector de Pestaña de destino en Slide 7 */}
+        <div className="form-group-original" style={{ width: '100%', maxWidth: '500px', marginTop: '10px' }}>
+          <label style={{ fontWeight: 600, color: '#334155' }}>
+            📊 Pestaña de Destino en Admin:
+          </label>
+          <select
+            value={isCustomTab ? '__NEW__' : selectedTab}
+            onChange={(e) => {
+              if (e.target.value === '__NEW__') {
+                setIsCustomTab(true);
+              } else {
+                setIsCustomTab(false);
+                setSelectedTab(e.target.value);
+                try { localStorage.setItem(LS_ACTIVE_SHEET_TAB, e.target.value); } catch (e) {}
+              }
+            }}
+            className="form-control-original"
+            style={{ padding: '10px 14px', fontSize: '0.92rem', borderRadius: '10px', background: 'rgba(255,255,255,0.85)', cursor: 'pointer' }}
+          >
+            {sheetTabs.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            <option value="__NEW__">+ ✍️ Escribir nueva pestaña...</option>
+          </select>
+
+          {isCustomTab && (
+            <div style={{ marginTop: '8px' }}>
+              <input
+                type="text"
+                value={customTabName}
+                onChange={(e) => setCustomTabName(e.target.value)}
+                placeholder="Escribe el nombre de la nueva pestaña..."
+                className="form-control-original"
+                style={{ padding: '10px 14px', fontSize: '0.92rem', borderRadius: '10px', border: '2px solid #2563EB', background: 'white' }}
+                autoFocus
+              />
+              <span style={{ fontSize: '0.75rem', color: '#2563EB', marginTop: '4px', display: 'block' }}>
+                ℹ️ Esta nueva pestaña se guardará automáticamente para todos los próximos leads.
+              </span>
+            </div>
+          )}
         </div>
 
         <button

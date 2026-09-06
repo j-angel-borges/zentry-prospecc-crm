@@ -1,15 +1,20 @@
 # 🎯 Zentry Prospecc (ZentryOS Lead Capture & Cloud CRM)
 
 > Sistema de Prospección en Frío, Calificación de Diagnóstico Infantil y CRM de Alta Conversión para Eventos Masivos (Expo Maternidad) y Venta Consultiva.
-> Publicado en: **https://zentry-prospecc.web.app**
+> - **App de Prospección (Formulario)**: `https://zentry-prospecc.web.app/`
+> - **CRM & Control Comercial Dedicado**: `https://zentry-prospecc.web.app/crm`
 
 ---
 
-## 🏛️ Arquitectura y Tecnologías
+## 🏛️ Arquitectura y Backend Cloud en Tiempo Real
 - **Framework Web**: React 19 + TypeScript + Vite + Tailwind CSS v4.
-- **Base de Datos Cloud**: Google Cloud Firestore (`leads_expo_maternidad`).
-- **Sincronización en Tiempo Real**: Listeners bi-direccionales `onSnapshot` con soporte offline y memoria local.
-- **Hosting & CDN**: Firebase Hosting Multisite en el proyecto `zentryos` (`zentry-prospecc.web.app`).
+- **Acceso Aislado CRM / Prospecc**: Enrutamiento SPA dinámico (`/crm` vs `/`) con sincronización con historial del navegador y compatibilidad multi-dominio/subdominio.
+- **Base de Datos Cloud SSOT**: Google Cloud Firestore (`leads_expo_maternidad` y `crm_settings/config`).
+- **Sincronización Multi-dispositivo en Vivo**:
+  - **Pestañas en la nube**: Cualquier pestaña creada en un dispositivo se difunde inmediatamente a todos los demás clientes en tiempo real.
+  - **Ediciones y Estados**: Modificaciones de texto, transferencias entre pestañas, calificaciones y cambios de embudo CRM persisten en Firestore con `setDoc(..., { merge: true })`.
+  - **Historial de Llamadas**: Registro con estampa de tiempo, observación y estados (SC, NC, Col, Bz, ll), con eliminación individual y limpieza masiva de NC.
+- **Hosting & CDN**: Firebase Hosting en el proyecto `zentryos`.
 
 ---
 
@@ -17,39 +22,20 @@
 
 ### 1. 🎯 Modo Prospección (Diagnostic Wizard de 7 Pasos)
 - Diseñado para asesores comerciales en campo (dispositivos móviles/tablets).
-- Flujo interactivo de alta velocidad:
-  1. **Portada & Atribución**: Selección del asesor comercial en turno.
-  2. **Nivel de Preocupación**: Termómetro interactivo de alarma cognitiva (1 - 10).
-  3. **Diagnóstico del Daño**: Detección de irritabilidad, berrinches, falta de sueño y desatención.
-  4. **Segmentación por Cohorte**: 👶 Menores (3-9a), 🧑 Mayores (10-17a) y 👨‍👩‍👧‍👦 Familias mixtas.
-  5. **Pregunta y Respuesta Dinámica**: Ramificación adaptativa según la edad del menor.
-  6. **Intencionalidad de Solución (Pitch ZentryOS)**: Gamificación bilateral de retos pedagógicos.
-  7. **Datos del Titular**: Captura de Padre/Madre, WhatsApp Perú (+51) y Distrito de Lima.
-  8. **Cierre, vCard QR y Clasificación**: Código QR interactivo de contacto y calificación térmica (🔥 Caliente, ⛅ Tibio, ❄️ Frío).
+- Botón superior derecho **📊 CRM** que redirecciona de forma inmediata a la vista y URL aislada del CRM.
+- Selector de pestaña de destino sincronizado en tiempo real con la nube.
+- Creación automática de nuevas pestañas en la nube durante la captura.
+- Guardado instantáneo en Firestore con actualización del contador en tiempo real.
 
-### 2. 📊 Hoja de Cálculo Interactiva (`Leads_ExpoMaternidad`)
-- Espejo digitalizado de la hoja Google Sheets original con capacidades de base de datos relacional/NoSQL:
-  - Búsqueda universal por cualquier campo.
-  - Filtros avanzados por Asesor, Temperatura, Estado CRM y Distrito.
-  - Edición en caliente de celdas y estados.
-  - Disparadores de WhatsApp con mensajes prefabricados a un clic.
-  - Exportación total a `.CSV` estructurado compatible con Excel y Google Sheets.
-  - Sembrador de datos muestra oficiales acumulados de la Expo Maternidad.
-
-### 3. 📋 Pipeline CRM (Vista Kanban)
-- Gestión del embudo comercial en 5 etapas:
-  1. 📥 **Nuevos Leads**
-  2. 📞 **Contactados / En Seguimiento**
-  3. 📅 **DemoBook Agendada**
-  4. 🏆 **Ventas Cerradas (Ganadas)**
-  5. 🚫 **Descartados / No Calificados**
-- Transición de etapas con 1 clic y métricas de flujo.
-
-### 4. 📈 Analítica & Control de Eventos
-- Barra de progreso hacia la meta diaria (120 leads/día).
-- Tasa de alta intención y nivel de dolor promedio reportado.
-- Leaderboard de asesores con mayor volumen de captación.
-- Mapa demográfico de distritos con mayor interés en ZentryOS.
+### 2. 📊 CRM & Control de Leads (`/crm`)
+- Vista independiente y dedicada sin superposición modal:
+  - **Pestañas Cloud en Vivo**: `Expo M (JA)`, `Expo M (R)`, pestañas personalizadas con conteos en tiempo real y botón para agregar (`+ Nueva Pestaña`) o eliminar pestañas.
+  - **Hoja de Cálculo Interactiva**: Edición en línea con lápiz/doble clic, búsqueda universal, filtros por distrito, ocultar/mostrar columnas y presets rápidos (CRM, Stand, Todos).
+  - **Gestión Call Center**: Selector de estado de llamada (SC, NC, Col, Bz, ll) + confirmación de estampa de tiempo y modal de historial.
+  - **Reasignación de Pestaña**: Transferencia directa de prospectos entre pestañas con persistencia cloud.
+  - **Pipeline CRM Kanban**: Flujo visual de embudo (Nuevos, Contactados, Demo Agendada, Ventas Cerradas, Descartados).
+  - **Exportación CSV**: Descarga de datos filtrados por pestaña o generales.
+  - **Enlace de Regreso**: Botón `📝 Captura de Leads` para retornar al formulario de campo.
 
 ---
 
@@ -68,3 +54,4 @@ npm run build
 # Desplegar a Firebase Hosting
 firebase deploy --only hosting:prospecc --project zentryos
 ```
+

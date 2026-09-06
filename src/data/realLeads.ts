@@ -1,3 +1,36 @@
+export interface CallLogEntry {
+  id: string;
+  code: 'SC' | 'NC' | 'Col' | 'Bz' | 'll' | string;
+  label?: string;
+  datetime: string; // e.g. "01/09/26 10:05am"
+  observation?: string;
+}
+
+export const DEFAULT_SHEET_TABS = ['Expo M (JA)', 'Expo M (R)'];
+export const LS_SHEET_TABS = 'zentry_sheet_tabs_v2';
+export const LS_ACTIVE_SHEET_TAB = 'zentry_active_sheet_tab_v2';
+
+export const getSavedSheetTabs = (): string[] => {
+  try {
+    const s = localStorage.getItem(LS_SHEET_TABS);
+    if (s) {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Asegurar que Expo M (JA) y Expo M (R) estén presentes
+        const set = new Set([...DEFAULT_SHEET_TABS, ...parsed]);
+        return Array.from(set);
+      }
+    }
+  } catch (e) {}
+  return DEFAULT_SHEET_TABS;
+};
+
+export const saveSheetTabs = (tabs: string[]) => {
+  try {
+    localStorage.setItem(LS_SHEET_TABS, JSON.stringify(tabs));
+  } catch (e) {}
+};
+
 export interface LeadData {
   id: string;
   timestamp: string;
@@ -13,6 +46,8 @@ export interface LeadData {
   observaciones: string;
   gestCall?: string;
   obserCalls?: string;
+  callHistory?: CallLogEntry[];
+  sheetTab?: string; // e.g. "Expo M (JA)", "Expo M (R)", etc.
   estadoCrm?: 'nuevo' | 'contactado' | 'demo_agendada' | 'ganado' | 'descartado';
 }
 
