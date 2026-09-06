@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { LeadData, CallLogEntry, getSavedSheetTabs, LS_ACTIVE_SHEET_TAB } from '../data/realLeads';
+import { LeadData, CallLogEntry, DEFAULT_SHEET_TABS, getSavedSheetTabs, LS_ACTIVE_SHEET_TAB } from '../data/realLeads';
 import {
   subscribeToCloudTabs,
   addCloudTab,
@@ -78,7 +78,7 @@ export const COLUMNS: ColumnMeta[] = [
   { key: 'gestCall', label: 'Gestión Call', shortLabel: 'Gestión Call', minWidth: '200px', headerBg: '#EFF6FF' },
   { key: 'obserCalls', label: 'Observaciones Calls', shortLabel: 'Obs Calls', minWidth: '240px', headerBg: '#EFF6FF' },
   { key: 'distrito', label: 'Distrito', shortLabel: 'Distrito', minWidth: '120px' },
-  { key: 'observaciones', label: 'Observaciones Stand', shortLabel: 'Obs Stand', minWidth: '220px' },
+  { key: 'observaciones', label: 'Observaciones del Lead', shortLabel: 'Obs Lead', minWidth: '220px' },
   { key: 'estadoCrm', label: 'Estado CRM', shortLabel: 'Estado', minWidth: '135px', headerBg: '#FDF4FF' },
   { key: 'timestamp', label: 'Fecha', shortLabel: 'Fecha', minWidth: '110px' },
   { key: 'edadHijos', label: 'Edad Hijos', shortLabel: 'Edad Hijos', minWidth: '105px', headerBg: '#FFF7ED' },
@@ -1207,7 +1207,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
   const exportCSV = () => {
     if (filteredLeads.length === 0) return;
     let csvContent = 'data:text/csv;charset=utf-8,\uFEFF';
-    csvContent += 'ID,Pestana,Nombre Madre,Celular,Gestion Call,Observaciones Calls,Distrito,Observaciones Stand,Estado CRM,Fecha,Edad Hijos,Nivel Preocupacion,Conocimiento Dano,Pregunta Condicional,Respuesta Condicional,Interes Solucion\n';
+    csvContent += 'ID,Pestana,Nombre Madre,Celular,Gestion Call,Observaciones Calls,Distrito,Observaciones del Lead,Estado CRM,Fecha,Edad Hijos,Nivel Preocupacion,Conocimiento Dano,Pregunta Condicional,Respuesta Condicional,Interes Solucion\n';
 
     filteredLeads.forEach(l => {
       const row = [
@@ -1802,7 +1802,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                         </td>
                       )}
 
-                      {/* 6. Observaciones Stand */}
+                      {/* 6. Observaciones del Lead */}
                       {isColCollapsed('observaciones') ? (
                         <td style={{ background: '#F8FAFC', textAlign: 'center', borderLeft: '2px solid #CBD5E1', borderRight: '2px solid #CBD5E1', padding: '4px 0' }} />
                       ) : (
@@ -1816,7 +1816,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                             maxChars={100}
                             forceExpandAll={expandAllTexts}
                             fullWidth={true}
-                            placeholder="Observaciones del stand..."
+                            placeholder="Observaciones del lead..."
                           />
                         </td>
                       )}
@@ -2133,7 +2133,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
           {sheetTabs.map((tab) => {
             const isActive = activeTab === tab;
             const count = getTabCount(tab);
-            const isCustom = !['Expo M (JA)', 'Expo M (R)'].includes(tab);
+            const isCustom = !DEFAULT_SHEET_TABS.includes(tab);
             return (
               <div
                 key={tab}
