@@ -393,7 +393,6 @@ p.original-subtitle {
   min-width: 1000px;
   background: white;
   border-radius: 12px;
-  overflow: hidden;
 }
 
 .spreadsheet-table th, .spreadsheet-table td {

@@ -186,6 +186,11 @@ const Icons = {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
     </svg>
+  ),
+  Filter: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+    </svg>
   )
 };
 
@@ -852,11 +857,294 @@ const CallHistoryModal: React.FC<CallHistoryModalProps> = ({
   );
 };
 
+// ─── Helper para normalizar texto (Title Case y remover puntuación final) ────
+export const normalizeTitleCase = (str: string): string => {
+  if (!str) return '';
+  const cleaned = str.trim().replace(/^[,.\s-]+|[,.\s-]+$/g, '');
+  if (!cleaned) return '';
+  return cleaned
+    .toLowerCase()
+    .split(/\s+/)
+    .map(word => {
+      if (['de', 'del', 'la', 'las', 'el', 'los', 'y', 'en'].includes(word)) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+};
+
+// ─── Componente Popover de Filtro Tipo Google Sheets ─────────────────────────
+interface ColumnFilterPopoverProps {
+  columnKey: 'gestCall' | 'distrito' | 'estadoCrm';
+  columnLabel: string;
+  uniqueValues: string[];
+  selectedValues: string[];
+  onApply: (selected: string[]) => void;
+  onClose: () => void;
+  renderValueLabel?: (val: string) => React.ReactNode;
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
+}
+
+const ColumnFilterPopover: React.FC<ColumnFilterPopoverProps> = ({
+  columnLabel,
+  uniqueValues,
+  selectedValues,
+  onApply,
+  onClose,
+  renderValueLabel,
+  triggerRef
+}) => {
+  const [tempSelected, setTempSelected] = useState<Set<string>>(() => new Set(selectedValues));
+  const [filterSearch, setFilterSearch] = useState<string>('');
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (triggerRef?.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const popoverWidth = 260;
+      let left = rect.left;
+      // Evitar salir de la pantalla por la derecha
+      if (left + popoverWidth > window.innerWidth - 10) {
+        left = window.innerWidth - popoverWidth - 10;
+      }
+      if (left < 10) left = 10;
+
+      setCoords({
+        top: rect.bottom + 6,
+        left
+      });
+    }
+  }, [triggerRef]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node) &&
+        triggerRef?.current &&
+        !triggerRef.current.contains(e.target as Node)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose, triggerRef]);
+
+  const filteredValues = uniqueValues.filter(val => {
+    const displayStr = val === '__BLANK__' ? '(Vacías)' : val;
+    return displayStr.toLowerCase().includes(filterSearch.toLowerCase());
+  });
+
+  const handleToggleValue = (val: string) => {
+    setTempSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(val)) {
+        next.delete(val);
+      } else {
+        next.add(val);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    setTempSelected(new Set(uniqueValues));
+  };
+
+  const handleClearAll = () => {
+    setTempSelected(new Set());
+  };
+
+  const handleApply = () => {
+    onApply(Array.from(tempSelected));
+    onClose();
+  };
+
+  return (
+    <div
+      ref={popoverRef}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: 'fixed',
+        top: `${coords.top}px`,
+        left: `${coords.left}px`,
+        zIndex: 99999,
+        background: '#FFFFFF',
+        borderRadius: '10px',
+        boxShadow: '0 12px 36px rgba(15, 23, 42, 0.22), 0 4px 12px rgba(15, 23, 42, 0.1)',
+        border: '1px solid #CBD5E1',
+        width: '260px',
+        padding: '14px',
+        fontSize: '0.82rem',
+        color: '#1E293B',
+        textAlign: 'left',
+        fontWeight: 'normal'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0F172A' }}>
+          Filtrar por {columnLabel}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: '#94A3B8',
+            fontSize: '1rem',
+            padding: '0 4px',
+            lineHeight: 1
+          }}
+          title="Cerrar"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Input de búsqueda de valores */}
+      <div style={{ marginBottom: '8px' }}>
+        <input
+          type="text"
+          value={filterSearch}
+          onChange={(e) => setFilterSearch(e.target.value)}
+          placeholder="Buscar valores..."
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            borderRadius: '6px',
+            border: '1px solid #CBD5E1',
+            fontSize: '0.8rem',
+            outline: 'none',
+            boxSizing: 'border-box'
+          }}
+          autoFocus
+        />
+      </div>
+
+      {/* Botones Seleccionar Todo / Borrar */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #F1F5F9' }}>
+        <button
+          type="button"
+          onClick={handleSelectAll}
+          style={{
+            border: 'none',
+            background: 'none',
+            color: '#2563EB',
+            fontSize: '0.74rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: 0
+          }}
+        >
+          Seleccionar todo
+        </button>
+        <span style={{ color: '#CBD5E1' }}>•</span>
+        <button
+          type="button"
+          onClick={handleClearAll}
+          style={{
+            border: 'none',
+            background: 'none',
+            color: '#2563EB',
+            fontSize: '0.74rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: 0
+          }}
+        >
+          Borrar
+        </button>
+      </div>
+
+      {/* Lista de checkboxes con scroll */}
+      <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '10px', paddingRight: '4px' }}>
+        {filteredValues.length === 0 ? (
+          <div style={{ color: '#94A3B8', fontSize: '0.75rem', padding: '12px 0', textAlign: 'center' }}>
+            No se encontraron coincidencias
+          </div>
+        ) : (
+          filteredValues.map(val => {
+            const isChecked = tempSelected.has(val);
+            return (
+              <label
+                key={val}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  padding: '4px 6px',
+                  borderRadius: '6px',
+                  background: isChecked ? '#F1F5F9' : 'transparent',
+                  fontSize: '0.78rem'
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() => handleToggleValue(val)}
+                  style={{ cursor: 'pointer', accentColor: '#2563EB', margin: 0 }}
+                />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {renderValueLabel ? renderValueLabel(val) : (val === '__BLANK__' ? <em style={{ color: '#94A3B8' }}>(Vacías)</em> : val)}
+                </span>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      {/* Botones de acción */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid #E2E8F0' }}>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            border: '1px solid #CBD5E1',
+            background: '#FFFFFF',
+            color: '#475569',
+            padding: '5px 12px',
+            borderRadius: '6px',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={handleApply}
+          style={{
+            border: 'none',
+            background: '#2563EB',
+            color: '#FFFFFF',
+            padding: '5px 14px',
+            borderRadius: '6px',
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            cursor: 'pointer'
+          }}
+        >
+          Aceptar
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Admin Panel Component ───────────────────────────────────────────────
 export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, onDeleteLead }) => {
   const [viewMode, setViewMode] = useState<'spreadsheet' | 'crm'>('spreadsheet');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [filterDistrito, setFilterDistrito] = useState<string>('todos');
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
+  const filterBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [expandAllTexts, setExpandAllTexts] = useState<boolean>(false);
   const [isColMenuOpen, setIsColMenuOpen] = useState<boolean>(false);
 
@@ -1034,18 +1322,25 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
     }));
 
     const target = leads.find(l => l.id === leadId);
-    if (target) {
-      const updatedLead: LeadData = {
-        ...target,
-        [field]: value
-      };
-      onUpdateLead(updatedLead);
-    }
+    if (!target) return;
+
+    const updatedLead: LeadData = {
+      ...target,
+      [field]: value
+    };
+    onUpdateLead(updatedLead);
 
     try {
-      await updateCloudLeadField(leadId, field, value);
+      // CRITICAL FIX: Always save the full lead document to Firestore first.
+      // If we only patch one field on a document that doesn't exist yet in
+      // Firestore (because it lives in the static data fallback), Firestore
+      // creates a nearly-empty document.  The real-time listener then sees
+      // that ID as "already in Firestore" and drops the static copy, making
+      // the lead appear to vanish.  Saving the full lead with merge:true is
+      // always safe: it's idempotent for existing docs and correct for new ones.
+      await saveCloudLead(updatedLead);
     } catch (err) {
-      console.warn(`Error actualizando campo en la nube para el lead ${leadId}:`, err);
+      console.warn(`Error guardando lead completo en la nube para el lead ${leadId}:`, err);
     }
   }, [leads, onUpdateLead]);
 
@@ -1168,9 +1463,45 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
     onDeleteLead(leadId);
   };
 
-  const distritos = Array.from(new Set(leads.map(l => l.distrito).filter(Boolean)));
+  // Valores únicos para filtros de columna (calculados sobre los leads de la pestaña activa o todos)
+  const uniqueDistritos = React.useMemo(() => {
+    const vals = new Set<string>();
+    let hasBlank = false;
+    const baseLeads = activeTab === '__ALL__' ? leads : leads.filter(l => getLeadSheetTab(l) === activeTab);
+    baseLeads.forEach(l => {
+      const raw = (getLeadField(l, 'distrito') || '').trim();
+      const norm = normalizeTitleCase(raw);
+      if (norm) vals.add(norm);
+      else hasBlank = true;
+    });
+    const sorted = Array.from(vals).sort((a, b) => a.localeCompare(b));
+    return hasBlank ? [...sorted, '__BLANK__'] : sorted;
+  }, [leads, localEdits, activeTab]);
 
-  // Filtrado de leads por pestaña activa + búsqueda + distrito
+  const uniqueGestCalls = React.useMemo(() => {
+    const vals = new Set<string>();
+    let hasBlank = false;
+    const baseLeads = activeTab === '__ALL__' ? leads : leads.filter(l => getLeadSheetTab(l) === activeTab);
+    baseLeads.forEach(l => {
+      const v = (getLeadField(l, 'gestCall') || '').trim();
+      if (v) vals.add(v);
+      else hasBlank = true;
+    });
+    const sorted = Array.from(vals).sort();
+    return hasBlank ? [...sorted, '__BLANK__'] : sorted;
+  }, [leads, localEdits, activeTab]);
+
+  const uniqueEstadosCrm = React.useMemo(() => {
+    const vals = new Set<string>();
+    const baseLeads = activeTab === '__ALL__' ? leads : leads.filter(l => getLeadSheetTab(l) === activeTab);
+    baseLeads.forEach(l => {
+      const v = (getLeadField(l, 'estadoCrm') || 'nuevo').trim();
+      vals.add(v);
+    });
+    return Array.from(vals).sort();
+  }, [leads, localEdits, activeTab]);
+
+  // Filtrado de leads por pestaña activa + búsqueda + filtros de columna (Google Sheets style)
   const filteredLeads = leads.filter(lead => {
     const leadTab = getLeadSheetTab(lead);
 
@@ -1179,7 +1510,34 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
       return false;
     }
 
+    // Filtros por columna individuales
+    if (columnFilters['distrito']) {
+      const rawDist = (getLeadField(lead, 'distrito') || '').trim();
+      const normDist = normalizeTitleCase(rawDist);
+      const matchKey = normDist === '' ? '__BLANK__' : normDist;
+      if (!columnFilters['distrito'].includes(matchKey)) {
+        return false;
+      }
+    }
+
+    if (columnFilters['gestCall']) {
+      const gestVal = (getLeadField(lead, 'gestCall') || '').trim();
+      const matchKey = gestVal === '' ? '__BLANK__' : gestVal;
+      if (!columnFilters['gestCall'].includes(matchKey)) {
+        return false;
+      }
+    }
+
+    if (columnFilters['estadoCrm']) {
+      const estVal = (getLeadField(lead, 'estadoCrm') || 'nuevo').trim();
+      if (!columnFilters['estadoCrm'].includes(estVal)) {
+        return false;
+      }
+    }
+
     const term = searchTerm.toLowerCase();
+    if (!term) return true;
+
     const nombre = (getLeadField(lead, 'nombreMadre') || '').toLowerCase();
     const celular = (getLeadField(lead, 'celular') || '');
     const distrito = (getLeadField(lead, 'distrito') || '').toLowerCase();
@@ -1187,16 +1545,14 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
     const gest = (getLeadField(lead, 'gestCall') || '').toLowerCase();
     const obsCall = (getLeadField(lead, 'obserCalls') || '').toLowerCase();
 
-    const matchSearch =
+    return (
       nombre.includes(term) ||
       celular.includes(term) ||
       distrito.includes(term) ||
       obs.includes(term) ||
       gest.includes(term) ||
-      obsCall.includes(term);
-
-    const matchDistrito = filterDistrito === 'todos' || lead.distrito === filterDistrito;
-    return matchSearch && matchDistrito;
+      obsCall.includes(term)
+    );
   });
 
   // Conteo de leads por pestaña
@@ -1427,24 +1783,32 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
           />
         </div>
 
-        {/* District Filter */}
-        <select
-          value={filterDistrito}
-          onChange={(e) => setFilterDistrito(e.target.value)}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '8px',
-            border: '1px solid #CBD5E1',
-            outline: 'none',
-            fontSize: '0.85rem',
-            background: 'white'
-          }}
-        >
-          <option value="todos">Todos los Distritos ({distritos.length})</option>
-          {distritos.map(d => (
-            <option key={d} value={d}>{d}</option>
-          ))}
-        </select>
+        {/* Active Column Filters Indicator & Reset */}
+        {Object.keys(columnFilters).length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.78rem', color: '#2563EB', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Icons.Filter />
+              <span>Filtros activos ({Object.keys(columnFilters).length})</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setColumnFilters({})}
+              style={{
+                background: '#EFF6FF',
+                border: '1px solid #BFDBFE',
+                color: '#1D4ED8',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+              title="Limpiar todos los filtros de columnas"
+            >
+              Limpiar filtros
+            </button>
+          </div>
+        )}
 
         {/* Column Visibility Menu */}
         {viewMode === 'spreadsheet' && (
@@ -1598,45 +1962,137 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                     );
                   }
 
-                  return (
-                    <th
-                      key={col.key}
-                      style={{
-                        minWidth: col.minWidth || '120px',
-                        background: col.headerBg || '#F8FAFC',
-                        position: 'relative'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
-                        <span>{col.label}</span>
-                        {col.key !== 'acciones' && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleCol(col.key);
+                    const isFilterable = col.key === 'gestCall' || col.key === 'distrito' || col.key === 'estadoCrm';
+                    const hasActiveFilter = !!columnFilters[col.key];
+                    const isFilterOpen = activeFilterCol === col.key;
+
+                    let uniqueVals: string[] = [];
+                    let initialSelected: string[] = [];
+                    let renderLabel: ((val: string) => React.ReactNode) | undefined = undefined;
+
+                    if (col.key === 'distrito') {
+                      uniqueVals = uniqueDistritos;
+                      initialSelected = columnFilters['distrito'] || uniqueDistritos;
+                    } else if (col.key === 'gestCall') {
+                      uniqueVals = uniqueGestCalls;
+                      initialSelected = columnFilters['gestCall'] || uniqueGestCalls;
+                      renderLabel = (val: string) => {
+                        if (val === '__BLANK__') return <em style={{ color: '#94A3B8' }}>(Sin registrar)</em>;
+                        const opt = CALL_STATUS_OPTIONS.find(o => o.code === val);
+                        return opt ? `${opt.code} - ${opt.label}` : val;
+                      };
+                    } else if (col.key === 'estadoCrm') {
+                      uniqueVals = uniqueEstadosCrm;
+                      initialSelected = columnFilters['estadoCrm'] || uniqueEstadosCrm;
+                      renderLabel = (val: string) => {
+                        const labels: Record<string, string> = {
+                          nuevo: '📥 Nuevo',
+                          contactado: '📞 Contactado',
+                          demo_agendada: '📅 Demo Agendada',
+                          ganado: '🏆 Ganado',
+                          descartado: '🚫 Descartado'
+                        };
+                        return labels[val] || val;
+                      };
+                    }
+
+                    return (
+                      <th
+                        key={col.key}
+                        style={{
+                          minWidth: col.minWidth || '120px',
+                          background: hasActiveFilter ? '#EFF6FF' : (col.headerBg || '#F8FAFC'),
+                          position: 'relative'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                          <span style={{ color: hasActiveFilter ? '#1D4ED8' : 'inherit', fontWeight: hasActiveFilter ? 800 : 700 }}>
+                            {col.label}
+                          </span>
+                          
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            {isFilterable && (
+                              <button
+                                ref={(el) => { filterBtnRefs.current[col.key] = el; }}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveFilterCol(isFilterOpen ? null : col.key);
+                                }}
+                                style={{
+                                  border: hasActiveFilter ? '1px solid #93C5FD' : 'none',
+                                  background: hasActiveFilter ? '#DBEAFE' : 'transparent',
+                                  cursor: 'pointer',
+                                  color: hasActiveFilter ? '#1D4ED8' : '#94A3B8',
+                                  padding: '2px 4px',
+                                  borderRadius: '4px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  transition: 'all 0.15s'
+                                }}
+                                title={`Filtrar por ${col.label} (estilo Google Sheets)`}
+                              >
+                                <Icons.Filter />
+                              </button>
+                            )}
+
+                            {col.key !== 'acciones' && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleCol(col.key);
+                                }}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  color: '#94A3B8',
+                                  padding: '2px 4px',
+                                  borderRadius: '4px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center'
+                                }}
+                                title={`Retraer columna ${col.label}`}
+                              >
+                                <Icons.MinusSquare />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Popover de Filtro Google Sheets */}
+                        {isFilterable && isFilterOpen && (
+                          <ColumnFilterPopover
+                            columnKey={col.key as 'gestCall' | 'distrito' | 'estadoCrm'}
+                            columnLabel={col.label}
+                            uniqueValues={uniqueVals}
+                            selectedValues={initialSelected}
+                            triggerRef={{ current: filterBtnRefs.current[col.key] || null }}
+                            onApply={(selected) => {
+                              if (selected.length === uniqueVals.length) {
+                                // Todos seleccionados = sin filtro activo en esta columna
+                                setColumnFilters(prev => {
+                                  const next = { ...prev };
+                                  delete next[col.key];
+                                  return next;
+                                });
+                              } else {
+                                setColumnFilters(prev => ({
+                                  ...prev,
+                                  [col.key]: selected
+                                }));
+                              }
                             }}
-                            style={{
-                              border: 'none',
-                              background: 'transparent',
-                              cursor: 'pointer',
-                              color: '#94A3B8',
-                              padding: '2px 4px',
-                              borderRadius: '4px',
-                              display: 'inline-flex',
-                              alignItems: 'center'
-                            }}
-                            title={`Retraer columna ${col.label}`}
-                          >
-                            <Icons.MinusSquare />
-                          </button>
+                            onClose={() => setActiveFilterCol(null)}
+                            renderValueLabel={renderLabel}
+                          />
                         )}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
 
             <tbody>
               {filteredLeads.length === 0 ? (

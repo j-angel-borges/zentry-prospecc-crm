@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
+import { QRCodeSVG } from 'qrcode.react';
 import { LeadData, getSavedSheetTabs, LS_ACTIVE_SHEET_TAB } from '../data/realLeads';
 import { subscribeToCloudTabs, addCloudTab, saveCloudLead } from '../services/cloudCrm';
 
@@ -460,18 +461,29 @@ export const OriginalWizard: React.FC<Props> = ({ onLeadSaved }) => {
         </button>
       </div>
 
-      {/* Slide 7: vCard, Observaciones y Pestaña de Destino */}
+        {/* Slide 7: vCard, Observaciones y Pestaña de Destino */}
       <div className={`${getSlideClass('slide7')} slide-scrollable`} id="slide7">
         <h1 className="original-title" style={{ marginTop: '20px' }}>¡Casi listo!</h1>
         <p className="original-subtitle" style={{ marginBottom: '10px' }}>
           Escanea mi vCard para estar en contacto.
         </p>
 
-        <img
+        <div
           id="qr-code-img"
-          src="https://raw.githubusercontent.com/j-angel-borges/zentry-assets/main/qr-vcard"
-          alt="QR vCard"
-        />
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(255, 255, 255, 0.95)'
+          }}
+        >
+          <QRCodeSVG
+            value={`BEGIN:VCARD\nVERSION:3.0\nN:Zentry;Angel Borges\nFN:Angel Borges Zentry\nORG:Quarz Group\nADR:;;Avenida san borja norte 459;lima;lima;15036;Peru\nTEL;TYPE=WORK;VOICE:933709385\nTEL;TYPE=CELL;VOICE:933709385\nEMAIL;WORK;INTERNET:angel.borges@quarz.online\nURL:https://www.linkedin.com/in/jose-angel-borges-9b083a204/\nEND:VCARD`}
+            size={240}
+            level="M"
+            marginSize={1}
+          />
+        </div>
 
         <div className="form-group-original" style={{ width: '100%', maxWidth: '500px', marginTop: '15px' }}>
           <label style={{ textAlign: 'center' }}>Observaciones Adicionales (Post-Charla)</label>
