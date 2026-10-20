@@ -1,0 +1,3005 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { LeadData, DEFAULT_SHEET_TABS } from '../data/realLeads';
+import {
+  FollowUpStep,
+  WhatsAppCampaign,
+  WhatsAppOutboxItem,
+  normalizePeruPhone,
+  extractLeadNames,
+  renderDynamicMessage,
+  createCampaignAndOutbox,
+  subscribeToCampaigns,
+  subscribeToOutbox,
+  updateOutboxItemStatus,
+  handleInboundProspectReply,
+  toggleCampaignStatus,
+  deleteCampaignAndOutbox
+} from '../services/whatsappCampaigns';
+
+interface TickToolModalProps {
+  leads: LeadData[];
+  sheetTabs?: string[];
+  preselectedLeadIds?: string[];
+  initialSourceTab?: string;
+  isStandalone?: boolean;
+  onClose?: () => void;
+}
+
+const toLocalDateTimeInputValue = (epochMs: number): string => {
+  const d = new Date(epochMs || Date.now() + 5 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const DELAY_PRESETS: Array<{
+  label: string;
+  displayLabel: string;
+  value: number;
+  unit: 'minutes' | 'hours' | 'days' | 'datetime';
+  ms: number;
+}> = [
+  { label: '1 min', displayLabel: '+1 min', value: 1, unit: 'minutes', ms: 60 * 1000 },
+  { label: '5 min', displayLabel: '+5 min', value: 5, unit: 'minutes', ms: 5 * 60 * 1000 },
+  { label: '10 min', displayLabel: '+10 min', value: 10, unit: 'minutes', ms: 10 * 60 * 1000 },
+  { label: '15 min', displayLabel: '+15 min', value: 15, unit: 'minutes', ms: 15 * 60 * 1000 },
+  { label: '30 min', displayLabel: '+30 min', value: 30, unit: 'minutes', ms: 30 * 60 * 1000 },
+  { label: '1 hour', displayLabel: '+1 hora', value: 1, unit: 'hours', ms: 3600 * 1000 },
+  { label: '6 hours', displayLabel: '+6 horas', value: 6, unit: 'hours', ms: 6 * 3600 * 1000 },
+  { label: '12 hours', displayLabel: '+12 horas', value: 12, unit: 'hours', ms: 12 * 3600 * 1000 },
+  { label: '24 hours', displayLabel: '+24 horas', value: 24, unit: 'hours', ms: 24 * 3600 * 1000 },
+  { label: '2 days', displayLabel: '+48 horas', value: 2, unit: 'days', ms: 48 * 3600 * 1000 },
+  { label: '3 days', displayLabel: '+72 horas', value: 3, unit: 'days', ms: 72 * 3600 * 1000 },
+  { label: 'custom_rel', displayLabel: 'Tiempo exacto', value: 5, unit: 'minutes', ms: 5 * 60 * 1000 },
+  { label: 'custom_datetime', displayLabel: 'Fecha y Hora', value: 0, unit: 'datetime', ms: 5 * 60 * 1000 }
+];
+
+const SvgIcon = {
+  Zap: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  ),
+  Layers: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+      <polyline points="2 17 12 22 22 17" />
+      <polyline points="2 12 12 17 22 12" />
+    </svg>
+  ),
+  Inbox: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </svg>
+  ),
+  Cpu: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
+      <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
+      <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
+      <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
+    </svg>
+  ),
+  Tag: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
+  ),
+  Globe: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  ),
+  Search: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  ),
+  Paperclip: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  ),
+  File: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  ),
+  GitBranch: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </svg>
+  ),
+  Clock: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
+  Calendar: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
+  Shield: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  ),
+  Refresh: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  ),
+  Archive: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  ),
+  Trash: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  ),
+  Play: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+  ),
+  Pause: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="4" width="4" height="16" />
+      <rect x="14" y="4" width="4" height="16" />
+    </svg>
+  ),
+  Send: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  ),
+  MessageSquare: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  Folder: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  Maximize: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  )
+};
+
+const MESSAGE_TEMPLATES = [
+  {
+    title: 'Post-Evento Expo Maternidad',
+    body: 'Hola {First Name}, te saluda José Ángel del equipo de ZentryOS. Qué gusto haber conversado contigo en {Origen}. Te escribo al {Phone} para compartirte el acceso a la evaluación privada de bienestar digital para tu familia en {Distrito}. ¿Te queda bien si te envío el resumen por aquí?'
+  },
+  {
+    title: 'Agendar Demo Virtual',
+    body: 'Hola {First Name}, espero que todo vaya excelente en casa. Revisando tu ficha de {Origen}, reservamos 2 cupos esta semana para mostrarte en vivo cómo ZentryOS protege la atención de tus hijos sin peleas en casa. ¿Prefieres jueves 7:30 pm o sábado por la mañana?'
+  },
+  {
+    title: 'Reactivación Directa',
+    body: '¡Hola {Display Name}! Te escribimos desde ZentryOS. Sabemos que la rutina familiar es intensa; solo quería confirmar si pudiste revisar la propuesta o si prefieres que coordinemos una breve llamada de 5 minutos.'
+  }
+];
+
+export const TickToolModal: React.FC<TickToolModalProps> = ({
+  leads,
+  sheetTabs = DEFAULT_SHEET_TABS,
+  preselectedLeadIds = [],
+  initialSourceTab = 'Expo M (JA)',
+  isStandalone = false,
+  onClose
+}) => {
+  // Top navigation tabs: Wizard | Outbox Queue | Extension Preview
+  const [activeSection, setActiveSection] = useState<'wizard' | 'queue' | 'preview'>('wizard');
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Step 1: Audience State
+  const [audienceMode, setAudienceMode] = useState<'tab' | 'manual'>(
+    preselectedLeadIds.length > 0 ? 'manual' : 'tab'
+  );
+  const [selectedOriginTab, setSelectedOriginTab] = useState<string>(initialSourceTab || 'Expo M (JA)');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(preselectedLeadIds));
+  const [audienceSearch, setAudienceSearch] = useState<string>('');
+  const [audienceExpanded, setAudienceExpanded] = useState<boolean>(false);
+  const audTableRef = useRef<HTMLDivElement | null>(null);
+
+  // Outbox Queue Filters, Selection & Archiving State
+  const [outboxStatusFilter, setOutboxStatusFilter] = useState<string>('all');
+  const [outboxCampaignFilter, setOutboxCampaignFilter] = useState<string>('all');
+  const [outboxSearch, setOutboxSearch] = useState<string>('');
+  const [selectedOutboxIds, setSelectedOutboxIds] = useState<Set<string>>(() => new Set());
+  const [archivedOutboxIds, setArchivedOutboxIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('zentry_archived_outbox_v1');
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  const persistArchivedSet = (nextSet: Set<string>) => {
+    setArchivedOutboxIds(nextSet);
+    try {
+      localStorage.setItem('zentry_archived_outbox_v1', JSON.stringify(Array.from(nextSet)));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  // Step 2: Message & Follow-ups State
+  const [campaignName, setCampaignName] = useState<string>(
+    `Campaña Zentry — ${initialSourceTab || 'Expo M'}`
+  );
+  const [initialMessage, setInitialMessage] = useState<string>(MESSAGE_TEMPLATES[0].body);
+  const [followUps, setFollowUps] = useState<FollowUpStep[]>([
+    {
+      id: 'fu-1',
+      stepNumber: 1,
+      delayValue: 24,
+      delayUnit: 'hours',
+      delayLabel: '24 hours',
+      delayMs: 24 * 3600 * 1000,
+      customDateTime: toLocalDateTimeInputValue(Date.now() + 24 * 3600 * 1000),
+      messageTemplate:
+        'Hola {First Name}, solo pasaba por aquí para saber si pudiste ver mi mensaje anterior sobre ZentryOS. Quedo atento por si tienes alguna consulta.'
+    }
+  ]);
+  const [stopOnReply, setStopOnReply] = useState<boolean>(true);
+  const [previewLeadIndex, setPreviewLeadIndex] = useState<number>(0);
+  const [campaignAttachments, setCampaignAttachments] = useState<
+    Array<{ id: string; name: string; type: string; size: number; dataUrl: string }>
+  >([]);
+
+  const handleCampaignFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setCampaignAttachments((prev) => [
+          ...prev,
+          {
+            id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            name: f.name,
+            type: f.type || 'application/octet-stream',
+            size: f.size,
+            dataUrl: String(reader.result || '')
+          }
+        ]);
+      };
+      reader.readAsDataURL(f);
+    });
+    e.target.value = '';
+  };
+
+  // Step 3: Timing & Anti-Ban Jitter State
+  const [timingMode, setTimingMode] = useState<'now' | 'scheduled'>('now');
+  const [scheduledDate, setScheduledDate] = useState<string>(() => {
+    const d = new Date(Date.now() + 3600 * 1000);
+    return d.toISOString().slice(0, 10);
+  });
+  const [scheduledTime, setScheduledTime] = useState<string>('18:30');
+  const [jitterMinSec, setJitterMinSec] = useState<number>(45);
+  const [jitterMaxSec, setJitterMaxSec] = useState<number>(110);
+  const [dailyBatchLimit, setDailyBatchLimit] = useState<number>(35);
+
+  // Step 4 & Live Firestore State
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveSuccessBanner, setSaveSuccessBanner] = useState<string | null>(null);
+  const [campaigns, setCampaigns] = useState<WhatsAppCampaign[]>([]);
+  const [outbox, setOutbox] = useState<WhatsAppOutboxItem[]>([]);
+
+  // Live Preview / Simulator State
+  const [simPaused, setSimPaused] = useState<boolean>(false);
+  const [simJitterCountdown, setSimJitterCountdown] = useState<number>(0);
+  const [simActiveItem, setSimActiveItem] = useState<WhatsAppOutboxItem | null>(null);
+  const [simLog, setSimLog] = useState<string[]>([
+    '[zentry-ws-dispatcher] Service Worker inicializado.',
+    '[Anti-Ban Engine] Jitter calibrado: 45s - 110s.',
+    '[Firestore Sync] Conectado a whatsapp_campaigns y whatsapp_outbox.'
+  ]);
+
+  // Subscribe to Firestore collections
+  useEffect(() => {
+    const unsubCampaigns = subscribeToCampaigns(setCampaigns);
+    const unsubOutbox = subscribeToOutbox(setOutbox);
+    return () => {
+      unsubCampaigns();
+      unsubOutbox();
+    };
+  }, []);
+
+  // Listen for CRM selection events from parent/iframe postMessage
+  useEffect(() => {
+    const handleMsg = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'ZENTRY_CRM_SELECTION' && Array.isArray(e.data.leadIds)) {
+        if (e.data.leadIds.length > 0) {
+          setAudienceMode('manual');
+          setSelectedIds(new Set(e.data.leadIds));
+        }
+      }
+    };
+    window.addEventListener('message', handleMsg);
+    return () => window.removeEventListener('message', handleMsg);
+  }, []);
+
+  // Sync audience selection when switching origin tab in 'tab' mode
+  const getLeadTab = (l: LeadData) => (l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)');
+
+  useEffect(() => {
+    if (audienceMode === 'tab') {
+      const matching = leads.filter((l) =>
+        selectedOriginTab === '__ALL__' ? true : getLeadTab(l) === selectedOriginTab
+      );
+      setSelectedIds(new Set(matching.map((l) => l.id)));
+      setCampaignName(
+        `Campaña WS — ${selectedOriginTab === '__ALL__' ? 'Base General' : selectedOriginTab}`
+      );
+      if (audTableRef.current) {
+        audTableRef.current.scrollTop = 0;
+      }
+    }
+  }, [audienceMode, selectedOriginTab, leads]);
+
+  // Filtered and sorted leads for Step 1 table (selected & group leads appear at the very top!)
+  const visibleAudienceLeads = useMemo(() => {
+    const q = audienceSearch.trim().toLowerCase();
+    const filtered = leads.filter((l) => {
+      if (!q) return true;
+      return (
+        (l.nombreMadre || '').toLowerCase().includes(q) ||
+        (l.celular || '').toLowerCase().includes(q) ||
+        getLeadTab(l).toLowerCase().includes(q) ||
+        (l.distrito || '').toLowerCase().includes(q)
+      );
+    });
+    return filtered.slice().sort((a, b) => {
+      const aSel = selectedIds.has(a.id) ? 1 : 0;
+      const bSel = selectedIds.has(b.id) ? 1 : 0;
+      if (aSel !== bSel) return bSel - aSel;
+      const aTab = selectedOriginTab !== '__ALL__' && getLeadTab(a) === selectedOriginTab ? 1 : 0;
+      const bTab = selectedOriginTab !== '__ALL__' && getLeadTab(b) === selectedOriginTab ? 1 : 0;
+      if (aTab !== bTab) return bTab - aTab;
+      return 0;
+    });
+  }, [leads, selectedIds, selectedOriginTab, audienceSearch]);
+
+  const selectedLeadsList = useMemo(() => {
+    return leads.filter((l) => selectedIds.has(l.id));
+  }, [leads, selectedIds]);
+
+  const validSelectedLeads = useMemo(() => {
+    return selectedLeadsList.filter((l) => normalizePeruPhone(l.celular).valid);
+  }, [selectedLeadsList]);
+
+  const invalidSelectedCount = selectedLeadsList.length - validSelectedLeads.length;
+
+  const samplePreviewLead: LeadData = useMemo(() => {
+    if (validSelectedLeads.length > 0) {
+      return validSelectedLeads[previewLeadIndex % validSelectedLeads.length];
+    }
+    return (
+      leads[0] || {
+        id: 'demo-1',
+        nombreMadre: 'Cindy Huarcaya Castañeda',
+        celular: '984549686',
+        distrito: 'Bellavista Callao',
+        sheetTab: 'Expo M (JA)',
+        timestamp: '',
+        nivelPreocupacion: 10,
+        conocimientoDano: '',
+        edadHijos: '',
+        preguntaCondicional: '',
+        respuestaCondicional: '',
+        interesSolucion: 'Sí',
+        observaciones: ''
+      }
+    );
+  }, [validSelectedLeads, previewLeadIndex, leads]);
+
+  // Follow-up handlers
+  const handleAddFollowUp = () => {
+    const nextNum = followUps.length + 1;
+    setFollowUps((prev) => [
+      ...prev,
+      {
+        id: `fu-${Date.now()}`,
+        stepNumber: nextNum,
+        delayValue: 5,
+        delayUnit: 'minutes',
+        delayLabel: '5 min',
+        delayMs: 5 * 60 * 1000,
+        customDateTime: toLocalDateTimeInputValue(Date.now() + 5 * 60 * 1000),
+        messageTemplate:
+          'Hola {First Name}, ¿tuviste oportunidad de revisar el mensaje anterior? Quedo atento para apoyarte.'
+      }
+    ]);
+  };
+
+  const handleUpdateFollowUpDelay = (id: string, presetLabel: string) => {
+    const preset = DELAY_PRESETS.find((p) => p.label === presetLabel) || DELAY_PRESETS[1];
+    setFollowUps((prev) =>
+      prev.map((f) => {
+        if (f.id !== id) return f;
+        if (presetLabel === 'custom_datetime') {
+          const defaultDt = f.customDateTime || toLocalDateTimeInputValue(Date.now() + 5 * 60 * 1000);
+          const parsed = new Date(defaultDt).getTime();
+          const diffMs = !isNaN(parsed) ? Math.max(60 * 1000, parsed - Date.now()) : 5 * 60 * 1000;
+          return {
+            ...f,
+            delayLabel: 'custom_datetime',
+            delayUnit: 'datetime',
+            customDateTime: defaultDt,
+            delayMs: diffMs
+          };
+        }
+        if (presetLabel === 'custom_rel') {
+          const val = Math.max(1, f.delayValue || 5);
+          const unit: 'minutes' | 'hours' | 'days' =
+            f.delayUnit === 'minutes' || f.delayUnit === 'hours' || f.delayUnit === 'days' ? f.delayUnit : 'minutes';
+          const unitMs = unit === 'minutes' ? 60 * 1000 : unit === 'days' ? 24 * 3600 * 1000 : 3600 * 1000;
+          return {
+            ...f,
+            delayLabel: 'custom_rel',
+            delayValue: val,
+            delayUnit: unit,
+            delayMs: val * unitMs
+          };
+        }
+        return {
+          ...f,
+          delayValue: preset.value,
+          delayUnit: preset.unit,
+          delayLabel: preset.label,
+          delayMs: preset.ms
+        };
+      })
+    );
+  };
+
+  const handleUpdateFollowUpCustomRel = (
+    id: string,
+    newVal: number,
+    newUnit: 'minutes' | 'hours' | 'days'
+  ) => {
+    const val = Math.max(1, Number(newVal) || 1);
+    const unitMs = newUnit === 'minutes' ? 60 * 1000 : newUnit === 'days' ? 24 * 3600 * 1000 : 3600 * 1000;
+    setFollowUps((prev) =>
+      prev.map((f) =>
+        f.id === id
+          ? {
+              ...f,
+              delayLabel: 'custom_rel',
+              delayValue: val,
+              delayUnit: newUnit,
+              delayMs: val * unitMs
+            }
+          : f
+      )
+    );
+  };
+
+  const handleUpdateFollowUpDateTime = (id: string, newDateTime: string) => {
+    const parsed = new Date(newDateTime).getTime();
+    const diffMs = !isNaN(parsed) ? Math.max(30 * 1000, parsed - Date.now()) : 5 * 60 * 1000;
+    setFollowUps((prev) =>
+      prev.map((f) =>
+        f.id === id
+          ? {
+              ...f,
+              delayLabel: 'custom_datetime',
+              delayUnit: 'datetime',
+              customDateTime: newDateTime,
+              delayMs: diffMs
+            }
+          : f
+      )
+    );
+  };
+
+  const handleUpdateFollowUpText = (id: string, text: string) => {
+    setFollowUps((prev) => prev.map((f) => (f.id === id ? { ...f, messageTemplate: text } : f)));
+  };
+
+  const handleRemoveFollowUp = (id: string) => {
+    setFollowUps((prev) =>
+      prev
+        .filter((f) => f.id !== id)
+        .map((f, idx) => ({
+          ...f,
+          stepNumber: idx + 1
+        }))
+    );
+  };
+
+  const insertPlaceholder = (placeholder: string) => {
+    setInitialMessage((prev) => `${prev}${prev.endsWith(' ') || !prev ? '' : ' '}${placeholder}`);
+  };
+
+  // Save Campaign to Firestore
+  const handleSaveCampaign = async () => {
+    if (validSelectedLeads.length === 0) return;
+    setIsSaving(true);
+    setSaveSuccessBanner(null);
+
+    let scheduledStartAt = Date.now();
+    if (timingMode === 'scheduled' && scheduledDate && scheduledTime) {
+      const parsed = new Date(`${scheduledDate}T${scheduledTime}:00`).getTime();
+      if (!isNaN(parsed)) scheduledStartAt = parsed;
+    }
+
+    const result = await createCampaignAndOutbox({
+      name: campaignName.trim() || 'Campaña Zentry WS',
+      audienceSource: audienceMode === 'tab' ? selectedOriginTab : 'Selección Manual',
+      leads: validSelectedLeads,
+      initialMessage,
+      followUps,
+      attachments: campaignAttachments,
+      stopOnReply,
+      timingMode,
+      scheduledStartAt,
+      jitterMinSec,
+      jitterMaxSec,
+      dailyBatchLimit
+    });
+
+    // Notify Chrome extension if installed + push full outbox items with attachments
+    try {
+      window.postMessage(
+        {
+          type: 'ZENTRY_TICKTOOL_PUSH_QUEUE',
+          items: result.outboxItems,
+          dispatchImmediately: timingMode === 'now'
+        },
+        '*'
+      );
+      window.postMessage(
+        {
+          type: 'ZENTRY_WS_DISPATCH_CAMPAIGN',
+          campaignId: result.campaign.id,
+          totalQueued: result.outboxItems.length
+        },
+        '*'
+      );
+    } catch (e) {}
+
+    setIsSaving(false);
+    setSaveSuccessBanner(
+      `Campaña "${result.campaign.name}" guardada • ${result.campaign.totalContacts} contactos, ${result.outboxItems.length} mensajes en cola.`
+    );
+    setTimeout(() => {
+      setActiveSection('queue');
+    }, 1100);
+  };
+
+  // Simulator helper: simulate dispatching next pending message with jitter
+  const handleSimulateNextDispatch = async () => {
+    if (simPaused) return;
+    const nextPending = outbox.find((item) => item.status === 'pending');
+    if (!nextPending) {
+      setSimLog((prev) => [`[${new Date().toLocaleTimeString()}] Sin mensajes pendientes en cola.`, ...prev]);
+      return;
+    }
+
+    const jitterMs = Math.floor(Math.random() * (110000 - 45000 + 1)) + 45000;
+    const jitterSec = Math.round(jitterMs / 1000);
+    setSimActiveItem(nextPending);
+    setSimJitterCountdown(jitterSec);
+
+    setSimLog((prev) => [
+      `[Jitter] Delay aleatorio: ${jitterSec}s para ${nextPending.displayName} +${nextPending.normalizedPhone}`,
+      `[WhatsApp Web] web.whatsapp.com/send?phone=${nextPending.normalizedPhone}`,
+      ...prev
+    ]);
+
+    await updateOutboxItemStatus(nextPending.id, 'dispatched');
+    setSimLog((prev) => [
+      `[Enviado] ${nextPending.displayName} • ${nextPending.stepLabel} -> dispatched.`,
+      ...prev
+    ]);
+  };
+
+  // Simulator helper: simulate inbound reply trigger
+  const handleSimulateInboundReply = async (item: WhatsAppOutboxItem) => {
+    const res = await handleInboundProspectReply(
+      item.normalizedPhone,
+      `¡Hola! Sí me interesa agendar la demo de ZentryOS para mis hijos.`
+    );
+    setSimLog((prev) => [
+      `[Inbound Stop] Respuesta detectada de ${item.displayName} +${item.normalizedPhone}.`,
+      `[Firestore] Marcado como replied y ${res.cancelledFollowUps} seguimientos cancelados.`,
+      ...prev
+    ]);
+  };
+
+  const isItemArchived = (item: WhatsAppOutboxItem) =>
+    archivedOutboxIds.has(item.id) || Boolean((item as any).archived);
+
+  const activeOutboxItems = useMemo(
+    () => outbox.filter((i) => !isItemArchived(i)),
+    [outbox, archivedOutboxIds]
+  );
+  const archivedOutboxCount = useMemo(
+    () => outbox.filter((i) => isItemArchived(i)).length,
+    [outbox, archivedOutboxIds]
+  );
+
+  const pendingOutboxCount = activeOutboxItems.filter((i) => i.status === 'pending').length;
+  const dispatchedOutboxCount = activeOutboxItems.filter((i) => i.status === 'dispatched').length;
+  const repliedOutboxCount = activeOutboxItems.filter((i) => i.status === 'replied').length;
+  const cancelledOutboxCount = activeOutboxItems.filter((i) => i.status === 'cancelled').length;
+  const activeBatchProgress = Math.min(dailyBatchLimit, dispatchedOutboxCount + repliedOutboxCount);
+
+  const campaignTitleMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    campaigns.forEach((c) => {
+      if (c.id) map[c.id] = c.name || c.id;
+    });
+    outbox.forEach((o) => {
+      if (o.campaignId && !map[o.campaignId]) {
+        map[o.campaignId] = o.campaignName || `Campaña (${o.campaignId.slice(-6)})`;
+      }
+    });
+    return map;
+  }, [campaigns, outbox]);
+
+  const filteredOutbox = useMemo(() => {
+    const q = outboxSearch.trim().toLowerCase();
+    return outbox.filter((item) => {
+      const archived = isItemArchived(item);
+      if (outboxStatusFilter === 'archived') {
+        if (!archived) return false;
+      } else {
+        if (archived) return false;
+        if (outboxStatusFilter !== 'all' && item.status !== outboxStatusFilter) return false;
+      }
+      if (outboxCampaignFilter !== 'all' && item.campaignId !== outboxCampaignFilter) return false;
+      if (q) {
+        const hay = `${item.displayName || ''} ${item.normalizedPhone || ''} ${item.renderedMessage || ''} ${campaignTitleMap[item.campaignId] || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [outbox, archivedOutboxIds, outboxStatusFilter, outboxCampaignFilter, outboxSearch, campaignTitleMap]);
+
+  const handleArchiveIds = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const next = new Set(archivedOutboxIds);
+    ids.forEach((id) => next.add(id));
+    persistArchivedSet(next);
+    setSelectedOutboxIds((prev) => {
+      const n = new Set(prev);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+  };
+
+  const handleUnarchiveIds = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const next = new Set(archivedOutboxIds);
+    ids.forEach((id) => next.delete(id));
+    persistArchivedSet(next);
+    setSelectedOutboxIds((prev) => {
+      const n = new Set(prev);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+  };
+
+  const contentNode = (
+    <div
+      style={{
+        background: '#FFFFFF',
+        borderRadius: isStandalone ? '0' : '16px',
+        width: '100%',
+        maxWidth: isStandalone ? '100%' : '1060px',
+        minHeight: isStandalone ? '100vh' : 'auto',
+        maxHeight: isStandalone ? 'none' : '92vh',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: isStandalone ? 'none' : '0 24px 60px rgba(15, 23, 42, 0.25)',
+        border: isStandalone ? 'none' : '1px solid #E2E8F0',
+        overflow: 'hidden',
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Top Header Bar */}
+      <div
+        style={{
+          padding: '12px 20px',
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #311042 100%)',
+          color: '#FFFFFF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            style={{
+              width: '34px',
+              height: '34px',
+              borderRadius: '8px',
+              background: 'rgba(16, 185, 129, 0.2)',
+              border: '1px solid rgba(16, 185, 129, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#34D399'
+            }}
+          >
+            <SvgIcon.Zap />
+          </div>
+          <h3 style={{ margin: 0, fontSize: '0.96rem', fontWeight: 800, letterSpacing: '-0.01em' }}>
+            Campañas WhatsApp
+          </h3>
+        </div>
+
+        {/* Navigation Pills */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setActiveSection('wizard')}
+            style={{
+              border: 'none',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.76rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              background: activeSection === 'wizard' ? '#10B981' : 'rgba(255,255,255,0.1)',
+              color: '#FFFFFF',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+          >
+            <SvgIcon.Layers />
+            <span>Campañas</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('queue')}
+            style={{
+              border: 'none',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.76rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              background: activeSection === 'queue' ? '#10B981' : 'rgba(255,255,255,0.1)',
+              color: '#FFFFFF',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+          >
+            <SvgIcon.Inbox />
+            <span>Cola</span>
+            <span
+              style={{
+                background: 'rgba(0,0,0,0.3)',
+                padding: '1px 6px',
+                borderRadius: '999px',
+                fontSize: '0.68rem'
+              }}
+            >
+              {pendingOutboxCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('preview')}
+            style={{
+              border: '1px solid rgba(194, 244, 231, 0.35)',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.76rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              background: activeSection === 'preview' ? '#533B87' : 'rgba(83, 59, 135, 0.35)',
+              color: '#EBF1F5',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+          >
+            <SvgIcon.Cpu />
+            <span>Extensión</span>
+          </button>
+          {onClose && !isStandalone && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                border: 'none',
+                background: 'rgba(255,255,255,0.12)',
+                color: '#FFFFFF',
+                width: '30px',
+                height: '30px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 700
+              }}
+              title="Cerrar"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Sub-bar with Stepper when in Wizard mode */}
+      {activeSection === 'wizard' && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '8px',
+            padding: '10px 20px',
+            background: '#F8FAFC',
+            borderBottom: '1px solid #E2E8F0'
+          }}
+        >
+          {[
+            { step: 1, title: '1. Audiencia', sub: `${validSelectedLeads.length} válidos` },
+            { step: 2, title: '2. Mensaje', sub: `1 + ${followUps.length} seguimiento` },
+            { step: 3, title: '3. Envío', sub: `${jitterMinSec}s–${jitterMaxSec}s • ${dailyBatchLimit}/día` },
+            { step: 4, title: '4. Confirmar', sub: 'Guardar y Encolar' }
+          ].map((item) => {
+            const isCurrent = wizardStep === item.step;
+            const isDone = wizardStep > item.step;
+            return (
+              <button
+                key={item.step}
+                type="button"
+                onClick={() => setWizardStep(item.step as 1 | 2 | 3 | 4)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  border: isCurrent
+                    ? '1.5px solid #533B87'
+                    : isDone
+                    ? '1px solid #86EFAC'
+                    : '1px solid #E2E8F0',
+                  background: isCurrent ? '#F5F3FF' : isDone ? '#F0FDF4' : '#FFFFFF',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '0.76rem',
+                    fontWeight: 800,
+                    color: isCurrent ? '#533B87' : isDone ? '#15803D' : '#334155'
+                  }}
+                >
+                  {isDone ? '✓ ' : ''}
+                  {item.title}
+                </span>
+                <span style={{ fontSize: '0.68rem', color: '#64748B', marginTop: '2px' }}>{item.sub}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Main Scrollable Content Area */}
+      <div style={{ padding: '18px 20px', overflowY: 'auto', flex: 1, background: '#F8FAFC' }}>
+        {saveSuccessBanner && (
+          <div
+            style={{
+              marginBottom: '14px',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              background: '#ECFDF5',
+              border: '1px solid #6EE7B7',
+              color: '#065F46',
+              fontSize: '0.84rem',
+              fontWeight: 700
+            }}
+          >
+            {saveSuccessBanner}
+          </div>
+        )}
+
+        {/* ==================== SECTION 1: WIZARD 4 PASOS ==================== */}
+        {activeSection === 'wizard' && (
+          <>
+            {/* PASO 1: AUDIENCE */}
+            {wizardStep === 1 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    padding: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.92rem', color: '#0F172A', fontWeight: 800 }}>
+                      Audiencia
+                    </h4>
+
+                    {/* Audience Stats Pills */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span
+                        style={{
+                          background: '#ECFDF5',
+                          color: '#059669',
+                          border: '1px solid #A7F3D0',
+                          padding: '5px 10px',
+                          borderRadius: '8px',
+                          fontSize: '0.76rem',
+                          fontWeight: 800
+                        }}
+                      >
+                        ✓ {validSelectedLeads.length} válidos
+                      </span>
+                      {invalidSelectedCount > 0 && (
+                        <span
+                          style={{
+                            background: '#FEF2F2',
+                            color: '#DC2626',
+                            border: '1px solid #FECACA',
+                            padding: '5px 10px',
+                            borderRadius: '8px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700
+                          }}
+                        >
+                          {invalidSelectedCount} inválidos
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Origin / SheetTab Selector Chips */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {sheetTabs.map((tab) => {
+                      const count = leads.filter((l) => getLeadTab(l) === tab).length;
+                      const isSelected = selectedOriginTab === tab;
+                      return (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => {
+                            setSelectedOriginTab(tab);
+                            setAudienceMode('tab');
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '8px',
+                            border: isSelected ? '1.5px solid #533B87' : '1px solid #CBD5E1',
+                            background: isSelected ? '#533B87' : '#F8FAFC',
+                            color: isSelected ? '#FFFFFF' : '#334155',
+                            fontSize: '0.76rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px'
+                          }}
+                        >
+                          <SvgIcon.Tag />
+                          <span>{tab} • {count}</span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedOriginTab('__ALL__');
+                        setAudienceMode('tab');
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: selectedOriginTab === '__ALL__' ? '1.5px solid #2563EB' : '1px solid #CBD5E1',
+                        background: selectedOriginTab === '__ALL__' ? '#2563EB' : '#F8FAFC',
+                        color: selectedOriginTab === '__ALL__' ? '#FFFFFF' : '#334155',
+                        fontSize: '0.76rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                    >
+                      <SvgIcon.Globe />
+                      <span>Todas • {leads.length}</span>
+                    </button>
+                  </div>
+
+                  {/* Search, Expand & Manual Checkbox Controls */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      background: '#F8FAFC',
+                      padding: '8px 10px',
+                      borderRadius: '10px',
+                      border: '1px solid #E2E8F0'
+                    }}
+                  >
+                    <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '10px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#64748B',
+                          display: 'flex',
+                          alignItems: 'center',
+                          pointerEvents: 'none'
+                        }}
+                      >
+                        <SvgIcon.Search />
+                      </span>
+                      <input
+                        type="text"
+                        value={audienceSearch}
+                        onChange={(e) => setAudienceSearch(e.target.value)}
+                        placeholder="Buscar contacto, teléfono, grupo o distrito..."
+                        style={{
+                          width: '100%',
+                          padding: '7px 30px 7px 32px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1',
+                          fontSize: '0.78rem',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      {audienceSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setAudienceSearch('')}
+                          style={{
+                            position: 'absolute',
+                            right: '8px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#64748B',
+                            fontWeight: 900,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAudienceMode('manual');
+                        setSelectedIds(new Set(visibleAudienceLeads.map((l) => l.id)));
+                      }}
+                      style={{
+                        padding: '7px 11px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        background: '#FFFFFF',
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        color: '#2563EB'
+                      }}
+                    >
+                      Seleccionar todos • {visibleAudienceLeads.length}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAudienceMode('manual');
+                        setSelectedIds(new Set());
+                      }}
+                      style={{
+                        padding: '7px 11px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        background: '#FFFFFF',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        color: '#64748B'
+                      }}
+                    >
+                      Limpiar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAudienceExpanded((prev) => !prev)}
+                      style={{
+                        padding: '7px 10px',
+                        borderRadius: '8px',
+                        border: '1.5px solid #533B87',
+                        background: audienceExpanded ? '#533B87' : '#F5F3FF',
+                        color: audienceExpanded ? '#FFFFFF' : '#533B87',
+                        fontSize: '0.74rem',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                    >
+                      <SvgIcon.Maximize />
+                      <span>{audienceExpanded ? 'Contraer' : 'Expandir'}</span>
+                    </button>
+                  </div>
+
+                  {/* Contact Checkbox Table */}
+                  <div
+                    ref={audTableRef}
+                    style={{
+                      maxHeight: audienceExpanded ? '560px' : '320px',
+                      overflowY: 'auto',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '8px',
+                      transition: 'max-height 0.25s ease'
+                    }}
+                  >
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                      <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 2 }}>
+                        <tr>
+                          <th style={{ padding: '8px 10px', textAlign: 'left', width: '36px' }}>✓</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left' }}>Contacto</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left' }}>WhatsApp</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left' }}>Origen</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left' }}>Distrito</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'left' }}>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleAudienceLeads.map((lead) => {
+                          const isChecked = selectedIds.has(lead.id);
+                          const phoneInfo = normalizePeruPhone(lead.celular);
+                          return (
+                            <tr
+                              key={lead.id}
+                              onClick={() => {
+                                setAudienceMode('manual');
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(lead.id)) next.delete(lead.id);
+                                  else next.add(lead.id);
+                                  return next;
+                                });
+                              }}
+                              style={{
+                                borderTop: '1px solid #F1F5F9',
+                                background: isChecked ? '#F5F3FF' : '#FFFFFF',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <td style={{ padding: '7px 10px' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {}}
+                                  style={{ accentColor: '#533B87', cursor: 'pointer' }}
+                                />
+                              </td>
+                              <td style={{ padding: '7px 10px', fontWeight: 700, color: '#0F172A' }}>
+                                {lead.nombreMadre}
+                                {isChecked && (
+                                  <span
+                                    style={{
+                                      marginLeft: '6px',
+                                      fontSize: '0.64rem',
+                                      background: '#DDD6FE',
+                                      color: '#533B87',
+                                      padding: '1px 6px',
+                                      borderRadius: '999px',
+                                      fontWeight: 800
+                                    }}
+                                  >
+                                    Seleccionado
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#334155' }}>
+                                {phoneInfo.display || lead.celular}
+                              </td>
+                              <td style={{ padding: '7px 10px' }}>
+                                <span
+                                  style={{
+                                    background: '#EFF6FF',
+                                    color: '#2563EB',
+                                    padding: '2px 6px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 700
+                                  }}
+                                >
+                                  {getLeadTab(lead)}
+                                </span>
+                              </td>
+                              <td style={{ padding: '7px 10px', color: '#64748B' }}>{lead.distrito || '-'}</td>
+                              <td style={{ padding: '7px 10px' }}>
+                                {phoneInfo.valid ? (
+                                  <span style={{ color: '#059669', fontWeight: 700, fontSize: '0.72rem' }}>
+                                    ● Válido
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#DC2626', fontWeight: 700, fontSize: '0.72rem' }}>
+                                    ✕ Inválido
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    disabled={validSelectedLeads.length === 0}
+                    onClick={() => setWizardStep(2)}
+                    style={{
+                      background: '#533B87',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '10px 20px',
+                      fontSize: '0.84rem',
+                      fontWeight: 800,
+                      cursor: validSelectedLeads.length > 0 ? 'pointer' : 'not-allowed',
+                      opacity: validSelectedLeads.length > 0 ? 1 : 0.5
+                    }}
+                  >
+                    Siguiente: Mensaje ➔
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PASO 2: MESSAGE & FOLLOW-UPS */}
+            {wizardStep === 2 && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                  gap: '16px',
+                  alignItems: 'start'
+                }}
+              >
+                {/* Left Column: Message Editor & Follow-up Tree */}
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    padding: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}
+                >
+                  <div>
+                    <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#475569', display: 'block', marginBottom: '4px' }}>
+                      Nombre de la Campaña
+                    </label>
+                    <input
+                      type="text"
+                      value={campaignName}
+                      onChange={(e) => setCampaignName(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px 10px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  {/* Quick Templates */}
+                  <div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '5px' }}>
+                      Plantillas
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {MESSAGE_TEMPLATES.map((tpl) => (
+                        <button
+                          key={tpl.title}
+                          type="button"
+                          onClick={() => setInitialMessage(tpl.body)}
+                          style={{
+                            padding: '4px 9px',
+                            borderRadius: '6px',
+                            border: '1px solid #DDD6FE',
+                            background: '#F5F3FF',
+                            color: '#533B87',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {tpl.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Dynamic Placeholders */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#0F172A' }}>
+                        Mensaje Inicial
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {['{First Name}', '{Display Name}', '{Phone}', '{Distrito}', '{Origen}'].map((ph) => (
+                          <button
+                            key={ph}
+                            type="button"
+                            onClick={() => insertPlaceholder(ph)}
+                            style={{
+                              padding: '2px 7px',
+                              borderRadius: '6px',
+                              border: '1px solid #CBD5E1',
+                              background: '#F8FAFC',
+                              color: '#1E293B',
+                              fontSize: '0.68rem',
+                              fontFamily: 'monospace',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            + {ph}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <textarea
+                      value={initialMessage}
+                      onChange={(e) => setInitialMessage(e.target.value)}
+                      rows={4}
+                      style={{
+                        width: '100%',
+                        padding: '10px',
+                        borderRadius: '8px',
+                        border: '1.5px solid #CBD5E1',
+                        fontSize: '0.82rem',
+                        lineHeight: 1.45,
+                        fontFamily: 'inherit',
+                        resize: 'vertical',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+
+                    {/* File Attachment Box for Campaign */}
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        background: '#F8FAFC',
+                        border: '1px dashed #94A3B8',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#334155', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                          <SvgIcon.Paperclip />
+                          <span>Adjuntar Archivos</span>
+                        </span>
+                        <label
+                          style={{
+                            padding: '5px 12px',
+                            borderRadius: '7px',
+                            background: '#0F172A',
+                            color: '#FFFFFF',
+                            fontSize: '0.73rem',
+                            fontWeight: 800,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          + Adjuntar
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                            onChange={handleCampaignFileChange}
+                            style={{ display: 'none' }}
+                          />
+                        </label>
+                      </div>
+                      {campaignAttachments.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {campaignAttachments.map((att) => (
+                            <div
+                              key={att.id}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '4px 9px',
+                                borderRadius: '7px',
+                                background: '#ECFDF5',
+                                border: '1px solid #6EE7B7',
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                                color: '#065F46'
+                              }}
+                            >
+                              {att.type.startsWith('image/') && att.dataUrl ? (
+                                <img
+                                  src={att.dataUrl}
+                                  alt={att.name}
+                                  style={{ width: '22px', height: '22px', objectFit: 'cover', borderRadius: '4px' }}
+                                />
+                              ) : (
+                                <SvgIcon.File />
+                              )}
+                              <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {att.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setCampaignAttachments((prev) => prev.filter((x) => x.id !== att.id))}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: '#DC2626',
+                                  fontWeight: 900,
+                                  cursor: 'pointer',
+                                  padding: '0 2px'
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Follow-ups Chain */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0F172A', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <SvgIcon.GitBranch />
+                        <span>Seguimientos • {followUps.length}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAddFollowUp}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: '8px',
+                          border: '1px solid #10B981',
+                          background: '#ECFDF5',
+                          color: '#059669',
+                          fontSize: '0.74rem',
+                          fontWeight: 800,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        + Añadir
+                      </button>
+                    </div>
+
+                    {followUps.map((fu, idx) => {
+                      const humanTimingLabel =
+                        fu.delayLabel === 'custom_datetime' && fu.customDateTime
+                          ? `${new Date(fu.customDateTime).toLocaleString('es-PE', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}`
+                          : fu.delayLabel === 'custom_rel'
+                          ? `+${fu.delayValue} ${
+                              fu.delayUnit === 'minutes' ? 'min' : fu.delayUnit === 'days' ? 'días' : 'h'
+                            }`
+                          : DELAY_PRESETS.find((p) => p.label === fu.delayLabel)?.displayLabel || `+${fu.delayLabel}`;
+
+                      return (
+                        <div
+                          key={fu.id}
+                          style={{
+                            padding: '10px 12px',
+                            borderRadius: '10px',
+                            background: '#F8FAFC',
+                            border: '1px solid #CBD5E1',
+                            borderLeft: '4px solid #533B87',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#533B87' }}>
+                                Seguimiento #{idx + 1}
+                              </span>
+                              <select
+                                value={fu.delayLabel}
+                                onChange={(e) => handleUpdateFollowUpDelay(fu.id, e.target.value)}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #CBD5E1',
+                                  fontSize: '0.73rem',
+                                  fontWeight: 700,
+                                  background: '#FFFFFF',
+                                  color: '#0F172A'
+                                }}
+                              >
+                                {DELAY_PRESETS.map((p) => (
+                                  <option key={p.label} value={p.label}>
+                                    {p.displayLabel}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFollowUp(fu.id)}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: '#EF4444',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 700
+                              }}
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+
+                          {/* Custom Relative Delay Inputs */}
+                          {fu.delayLabel === 'custom_rel' && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 8px',
+                                borderRadius: '8px',
+                                background: '#EEF2FF',
+                                border: '1px solid #C7D2FE',
+                                flexWrap: 'wrap'
+                              }}
+                            >
+                              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#3730A3', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <SvgIcon.Clock />
+                                <span>Enviar tras:</span>
+                              </span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={999}
+                                value={fu.delayValue || 5}
+                                onChange={(e) =>
+                                  handleUpdateFollowUpCustomRel(
+                                    fu.id,
+                                    Number(e.target.value) || 1,
+                                    fu.delayUnit === 'minutes' || fu.delayUnit === 'hours' || fu.delayUnit === 'days'
+                                      ? fu.delayUnit
+                                      : 'minutes'
+                                  )
+                                }
+                                style={{
+                                  width: '64px',
+                                  padding: '4px 7px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #818CF8',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 800,
+                                  color: '#1E1B4B'
+                                }}
+                              />
+                              <select
+                                value={
+                                  fu.delayUnit === 'minutes' || fu.delayUnit === 'hours' || fu.delayUnit === 'days'
+                                    ? fu.delayUnit
+                                    : 'minutes'
+                                }
+                                onChange={(e) =>
+                                  handleUpdateFollowUpCustomRel(
+                                    fu.id,
+                                    fu.delayValue || 5,
+                                    e.target.value as 'minutes' | 'hours' | 'days'
+                                  )
+                                }
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #818CF8',
+                                  fontSize: '0.74rem',
+                                  fontWeight: 700,
+                                  background: '#FFFFFF',
+                                  color: '#1E1B4B'
+                                }}
+                              >
+                                <option value="minutes">minutos</option>
+                                <option value="hours">horas</option>
+                                <option value="days">días</option>
+                              </select>
+                            </div>
+                          )}
+
+                          {/* Exact Date & Time Picker */}
+                          {fu.delayLabel === 'custom_datetime' && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 8px',
+                                borderRadius: '8px',
+                                background: '#ECFDF5',
+                                border: '1px solid #6EE7B7',
+                                flexWrap: 'wrap'
+                              }}
+                            >
+                              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#065F46', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <SvgIcon.Calendar />
+                                <span>Fecha y hora:</span>
+                              </span>
+                              <input
+                                type="datetime-local"
+                                value={fu.customDateTime || toLocalDateTimeInputValue(Date.now() + 5 * 60 * 1000)}
+                                onChange={(e) => handleUpdateFollowUpDateTime(fu.id, e.target.value)}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #10B981',
+                                  fontSize: '0.74rem',
+                                  fontWeight: 700,
+                                  background: '#FFFFFF',
+                                  color: '#064E3B'
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Quick Timing Shortcut Pills */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                            {[
+                              { k: '1 min', lbl: '+1 min' },
+                              { k: '5 min', lbl: '+5 min' },
+                              { k: '15 min', lbl: '+15 min' },
+                              { k: '1 hour', lbl: '+1h' },
+                              { k: '24 hours', lbl: '+24h' },
+                              { k: 'custom_datetime', lbl: 'Calendario' }
+                            ].map((qp) => {
+                              const active = fu.delayLabel === qp.k;
+                              return (
+                                <button
+                                  key={qp.k}
+                                  type="button"
+                                  onClick={() => handleUpdateFollowUpDelay(fu.id, qp.k)}
+                                  style={{
+                                    padding: '2px 7px',
+                                    borderRadius: '6px',
+                                    border: active ? '1px solid #533B87' : '1px solid #CBD5E1',
+                                    background: active ? '#533B87' : '#FFFFFF',
+                                    color: active ? '#FFFFFF' : '#475569',
+                                    fontSize: '0.67rem',
+                                    fontWeight: 700,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  {qp.lbl}
+                                </button>
+                              );
+                            })}
+                            <span
+                              style={{
+                                marginLeft: 'auto',
+                                fontSize: '0.67rem',
+                                color: '#059669',
+                                fontWeight: 800,
+                                background: '#ECFDF5',
+                                padding: '2px 7px',
+                                borderRadius: '6px',
+                                border: '1px solid #A7F3D0'
+                              }}
+                            >
+                              {humanTimingLabel}
+                            </span>
+                          </div>
+
+                          <textarea
+                            value={fu.messageTemplate}
+                            onChange={(e) => handleUpdateFollowUpText(fu.id, e.target.value)}
+                            rows={2}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              borderRadius: '6px',
+                              border: '1px solid #CBD5E1',
+                              fontSize: '0.78rem',
+                              fontFamily: 'inherit',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Stop on Reply Switch */}
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      background: stopOnReply ? '#ECFDF5' : '#F8FAFC',
+                      border: `1px solid ${stopOnReply ? '#6EE7B7' : '#E2E8F0'}`,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SvgIcon.Shield />
+                      <span>Detener seguimiento al recibir respuesta</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={stopOnReply}
+                      onChange={(e) => setStopOnReply(e.target.checked)}
+                      style={{ width: '18px', height: '18px', accentColor: '#10B981', cursor: 'pointer' }}
+                    />
+                  </label>
+                </div>
+
+                {/* Right Column: Real-Time WhatsApp Bubble Preview */}
+                <div
+                  style={{
+                    background: '#EFEAE2',
+                    borderRadius: '14px',
+                    border: '1px solid #CBD5E1',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  {/* WhatsApp Header */}
+                  <div
+                    style={{
+                      background: '#075E54',
+                      color: '#FFFFFF',
+                      padding: '10px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div
+                        style={{
+                          width: '34px',
+                          height: '34px',
+                          borderRadius: '50%',
+                          background: '#128C7E',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 800,
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        {extractLeadNames(samplePreviewLead).firstName.charAt(0)}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>
+                          {extractLeadNames(samplePreviewLead).displayName}
+                        </div>
+                        <div style={{ fontSize: '0.68rem', color: '#A7F3D0' }}>
+                          {normalizePeruPhone(samplePreviewLead.celular).display} • en línea
+                        </div>
+                      </div>
+                    </div>
+
+                    {validSelectedLeads.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewLeadIndex((i) => i + 1)}
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.3)',
+                          background: 'rgba(255,255,255,0.12)',
+                          color: '#FFFFFF',
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          fontSize: '0.68rem',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <SvgIcon.Refresh />
+                        <span>{(previewLeadIndex % validSelectedLeads.length) + 1}/{validSelectedLeads.length}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Chat Bubbles Canvas */}
+                  <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '290px' }}>
+                    {/* Initial Message Bubble */}
+                    <div
+                      style={{
+                        alignSelf: 'flex-end',
+                        maxWidth: '88%',
+                        background: '#D9FDD3',
+                        color: '#111B21',
+                        padding: '8px 12px',
+                        borderRadius: '10px 0 10px 10px',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
+                        fontSize: '0.8rem',
+                        lineHeight: 1.45,
+                        whiteSpace: 'pre-wrap'
+                      }}
+                    >
+                      <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#059669', marginBottom: '3px' }}>
+                        MENSAJE INICIAL
+                      </div>
+                      {campaignAttachments.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                          {campaignAttachments.map((att) =>
+                            att.type.startsWith('image/') && att.dataUrl ? (
+                              <img
+                                key={att.id}
+                                src={att.dataUrl}
+                                alt={att.name}
+                                style={{
+                                  width: '100%',
+                                  maxHeight: '130px',
+                                  objectFit: 'cover',
+                                  borderRadius: '6px',
+                                  border: '1px solid rgba(0,0,0,0.08)'
+                                }}
+                              />
+                            ) : (
+                              <div
+                                key={att.id}
+                                style={{
+                                  padding: '5px 8px',
+                                  borderRadius: '6px',
+                                  background: 'rgba(255,255,255,0.75)',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  color: '#0F172A',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px'
+                                }}
+                              >
+                                <SvgIcon.Paperclip />
+                                <span>{att.name}</span>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+                      {renderDynamicMessage(initialMessage, samplePreviewLead)}
+                      <div style={{ fontSize: '0.64rem', color: '#667781', textAlign: 'right', marginTop: '4px' }}>
+                        11:45 a.m. ✓✓
+                      </div>
+                    </div>
+
+                    {/* Follow-up Bubbles */}
+                    {followUps.map((fu, idx) => {
+                      const humanBubbleLabel =
+                        fu.delayLabel === 'custom_datetime' && fu.customDateTime
+                          ? `${new Date(fu.customDateTime).toLocaleString('es-PE', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}`
+                          : fu.delayLabel === 'custom_rel'
+                          ? `+${fu.delayValue} ${
+                              fu.delayUnit === 'minutes' ? 'min' : fu.delayUnit === 'days' ? 'días' : 'h'
+                            }`
+                          : DELAY_PRESETS.find((p) => p.label === fu.delayLabel)?.displayLabel || `+${fu.delayLabel}`;
+
+                      return (
+                        <div
+                          key={fu.id}
+                          style={{
+                            alignSelf: 'flex-end',
+                            maxWidth: '88%',
+                            background: '#E7F8E3',
+                            border: '1px dashed #10B981',
+                            color: '#111B21',
+                            padding: '8px 12px',
+                            borderRadius: '10px 0 10px 10px',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+                            fontSize: '0.78rem',
+                            lineHeight: 1.4,
+                            whiteSpace: 'pre-wrap'
+                          }}
+                        >
+                          <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#533B87', marginBottom: '3px' }}>
+                            SEGUIMIENTO #{idx + 1} • {humanBubbleLabel}
+                          </div>
+                          {renderDynamicMessage(fu.messageTemplate, samplePreviewLead)}
+                          <div style={{ fontSize: '0.64rem', color: '#667781', textAlign: 'right', marginTop: '4px' }}>
+                            {humanBubbleLabel} ✓✓
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Step Navigation Footer */}
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      background: '#F8FAFC',
+                      borderTop: '1px solid #E2E8F0',
+                      display: 'flex',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setWizardStep(1)}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        background: '#FFFFFF',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ⬅ Atrás
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWizardStep(3)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: '#533B87',
+                        color: '#FFFFFF',
+                        fontSize: '0.8rem',
+                        fontWeight: 800,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Siguiente: Envío ➔
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PASO 3: TIMING & CADENCIA ANTI-BANEO */}
+            {wizardStep === 3 && (
+              <div
+                style={{
+                  background: '#FFFFFF',
+                  padding: '18px',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '16px'
+                }}
+              >
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#0F172A', fontWeight: 800 }}>
+                    Paso 3: Envío y Cadencia
+                  </h4>
+                </div>
+
+                {/* Start Mode Radio Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  <div
+                    onClick={() => setTimingMode('now')}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '10px',
+                      border: timingMode === 'now' ? '2px solid #10B981' : '1px solid #CBD5E1',
+                      background: timingMode === 'now' ? '#ECFDF5' : '#F8FAFC',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, fontSize: '0.85rem', color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SvgIcon.Zap /> Enviar ahora
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '4px' }}>
+                      Inicia el despacho escalonado entre {jitterMinSec}s y {jitterMaxSec}s.
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setTimingMode('scheduled')}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '10px',
+                      border: timingMode === 'scheduled' ? '2px solid #533B87' : '1px solid #CBD5E1',
+                      background: timingMode === 'scheduled' ? '#F5F3FF' : '#F8FAFC',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, fontSize: '0.85rem', color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SvgIcon.Calendar /> Programar inicio
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '4px' }}>
+                      Ejecutar en la fecha y hora elegida.
+                    </div>
+                    {timingMode === 'scheduled' && (
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }} onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="date"
+                          value={scheduledDate}
+                          onChange={(e) => setScheduledDate(e.target.value)}
+                          style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.78rem' }}
+                        />
+                        <input
+                          type="time"
+                          value={scheduledTime}
+                          onChange={(e) => setScheduledTime(e.target.value)}
+                          style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.78rem' }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Jitter & Daily Batch Configuration */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
+                  <div style={{ padding: '14px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0F172A', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SvgIcon.Clock /> Intervalo Aleatorio
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#64748B', display: 'block' }}>Mínimo seg</label>
+                        <input
+                          type="number"
+                          min={20}
+                          max={300}
+                          value={jitterMinSec}
+                          onChange={(e) => setJitterMinSec(Number(e.target.value) || 45)}
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontWeight: 700 }}
+                        />
+                      </div>
+                      <span style={{ fontWeight: 800, marginTop: '14px' }}>a</span>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#64748B', display: 'block' }}>Máximo seg</label>
+                        <input
+                          type="number"
+                          min={30}
+                          max={600}
+                          value={jitterMaxSec}
+                          onChange={(e) => setJitterMaxSec(Number(e.target.value) || 110)}
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #CBD5E1', fontWeight: 700 }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '14px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0F172A', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <SvgIcon.Shield /> Límite Diario
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <input
+                        type="number"
+                        min={5}
+                        max={200}
+                        value={dailyBatchLimit}
+                        onChange={(e) => setDailyBatchLimit(Number(e.target.value) || 35)}
+                        style={{ width: '110px', padding: '6px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', fontWeight: 800 }}
+                      />
+                      <span style={{ fontSize: '0.78rem', color: '#334155', fontWeight: 600 }}>
+                        mensajes / día
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(2)}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      border: '1px solid #CBD5E1',
+                      background: '#FFFFFF',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⬅ Atrás
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(4)}
+                    style={{
+                      padding: '9px 18px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: '#533B87',
+                      color: '#FFFFFF',
+                      fontSize: '0.82rem',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Siguiente: Confirmar ➔
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PASO 4: REVIEW & GUARDAR EN FIRESTORE */}
+            {wizardStep === 4 && (
+              <div
+                style={{
+                  background: '#FFFFFF',
+                  padding: '18px',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '16px'
+                }}
+              >
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.98rem', color: '#0F172A', fontWeight: 800 }}>
+                    Paso 4: Confirmar Campaña
+                  </h4>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                  <div style={{ padding: '12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Audiencia</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>
+                      {validSelectedLeads.length} contactos
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 700 }}>
+                      {audienceMode === 'tab' ? selectedOriginTab : 'Selección Manual'}
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Secuencia Total</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#533B87' }}>
+                      {validSelectedLeads.length * (1 + followUps.length)} mensajes
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                      1 Inicial + {followUps.length} Follow-up
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Cadencia y Lote</div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#059669' }}>
+                      {jitterMinSec}s – {jitterMaxSec}s
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                      Máx. {dailyBatchLimit} envíos/día • {stopOnReply ? 'Auto-Stop ON' : 'Auto-Stop OFF'}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '12px 14px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: '0.78rem' }}>
+                  <div style={{ fontWeight: 800, color: '#0F172A', marginBottom: '6px' }}>
+                    Resumen de Secuencia:
+                  </div>
+                  <div style={{ marginBottom: '6px' }}>
+                    <strong>• Inicial:</strong> {initialMessage}
+                  </div>
+                  {followUps.map((f, i) => (
+                    <div key={f.id} style={{ marginBottom: '4px', color: '#334155' }}>
+                      <strong>• Follow-up #{i + 1} +{f.delayLabel}:</strong> {f.messageTemplate}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(3)}
+                    style={{
+                      padding: '9px 16px',
+                      borderRadius: '8px',
+                      border: '1px solid #CBD5E1',
+                      background: '#FFFFFF',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⬅ Atrás
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSaving || validSelectedLeads.length === 0}
+                    onClick={handleSaveCampaign}
+                    style={{
+                      padding: '11px 22px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                      color: '#FFFFFF',
+                      fontSize: '0.86rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <SvgIcon.Send />
+                    {isSaving ? 'Guardando...' : 'Guardar y Activar Cola'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ==================== SECTION 2: OUTBOX QUEUE & CAMPAIGNS ==================== */}
+        {activeSection === 'queue' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Status Summary Bar */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+              {[
+                { key: 'pending', label: 'Pendientes', count: pendingOutboxCount, bg: '#EFF6FF', color: '#2563EB' },
+                { key: 'dispatched', label: 'Enviados', count: dispatchedOutboxCount, bg: '#ECFDF5', color: '#059669' },
+                { key: 'replied', label: 'Respondidos', count: repliedOutboxCount, bg: '#F5F3FF', color: '#533B87' },
+                { key: 'cancelled', label: 'Cancelados', count: cancelledOutboxCount, bg: '#FEF2F2', color: '#DC2626' },
+                { key: 'archived', label: 'Archivados', count: archivedOutboxCount, bg: '#F1F5F9', color: '#475569' }
+              ].map((st) => (
+                <div
+                  key={st.key}
+                  onClick={() => setOutboxStatusFilter(outboxStatusFilter === st.key ? 'all' : st.key)}
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    background: st.bg,
+                    border: outboxStatusFilter === st.key ? `2px solid ${st.color}` : '1px solid rgba(0,0,0,0.06)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: st.color }}>{st.label}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 800, color: st.color }}>{st.count}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Active Campaigns List */}
+            {campaigns.length > 0 && (
+              <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <SvgIcon.Folder /> Campañas Activas: {campaigns.length}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {campaigns.slice(0, 6).map((cmp) => {
+                    const isFiltered = outboxCampaignFilter === cmp.id;
+                    return (
+                      <div
+                        key={cmp.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          background: isFiltered ? '#F5F3FF' : '#F8FAFC',
+                          border: isFiltered ? '1.5px solid #533B87' : '1px solid #E2E8F0',
+                          flexWrap: 'wrap',
+                          gap: '8px'
+                        }}
+                      >
+                        <div
+                          onClick={() => setOutboxCampaignFilter(isFiltered ? 'all' : cmp.id)}
+                          style={{ cursor: 'pointer', flex: 1 }}
+                        >
+                          <strong style={{ fontSize: '0.8rem', color: '#0F172A' }}>
+                            {cmp.name}
+                          </strong>
+                          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                            {cmp.totalContacts} contactos • {cmp.jitterMinSec}s–{cmp.jitterMaxSec}s • Lote {cmp.dailyBatchLimit}/día
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => setOutboxCampaignFilter(isFiltered ? 'all' : cmp.id)}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              border: '1px solid #DDD6FE',
+                              background: isFiltered ? '#533B87' : '#FFFFFF',
+                              color: isFiltered ? '#FFFFFF' : '#533B87',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {isFiltered ? 'Filtrando' : 'Filtrar'}
+                          </button>
+                          <span
+                            style={{
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              background: cmp.status === 'paused' ? '#FEF3C7' : '#ECFDF5',
+                              color: cmp.status === 'paused' ? '#D97706' : '#059669'
+                            }}
+                          >
+                            {cmp.status.toUpperCase()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleCampaignStatus(cmp.id, cmp.status === 'paused' ? 'active' : 'paused')
+                            }
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              border: '1px solid #CBD5E1',
+                              background: '#FFFFFF',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            {cmp.status === 'paused' ? <><SvgIcon.Play /> Reanudar</> : <><SvgIcon.Pause /> Pausar</>}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteCampaignAndOutbox(cmp.id)}
+                            style={{
+                              padding: '5px 8px',
+                              borderRadius: '6px',
+                              border: '1px solid #FECACA',
+                              background: '#FEF2F2',
+                              color: '#DC2626',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}
+                            title="Eliminar campaña"
+                          >
+                            <SvgIcon.Trash />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Outbox Messages Table */}
+            <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <SvgIcon.Inbox /> Cola de Mensajes: {filteredOutbox.length}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {outboxStatusFilter === 'archived' ? (
+                    <button
+                      type="button"
+                      disabled={selectedOutboxIds.size === 0}
+                      onClick={() => handleUnarchiveIds(Array.from(selectedOutboxIds))}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1.5px solid #2563EB',
+                        background: selectedOutboxIds.size > 0 ? '#EFF6FF' : '#F8FAFC',
+                        color: selectedOutboxIds.size > 0 ? '#2563EB' : '#94A3B8',
+                        fontSize: '0.73rem',
+                        fontWeight: 800,
+                        cursor: selectedOutboxIds.size > 0 ? 'pointer' : 'not-allowed',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                    >
+                      <SvgIcon.Refresh /> Restaurar: {selectedOutboxIds.size}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={selectedOutboxIds.size === 0}
+                      onClick={() => handleArchiveIds(Array.from(selectedOutboxIds))}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1.5px solid #475569',
+                        background: selectedOutboxIds.size > 0 ? '#0F172A' : '#F1F5F9',
+                        color: selectedOutboxIds.size > 0 ? '#FFFFFF' : '#94A3B8',
+                        fontSize: '0.73rem',
+                        fontWeight: 800,
+                        cursor: selectedOutboxIds.size > 0 ? 'pointer' : 'not-allowed',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                    >
+                      <SvgIcon.Archive /> Archivar: {selectedOutboxIds.size}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSimulateNextDispatch}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: '#10B981',
+                      color: '#FFFFFF',
+                      fontSize: '0.74rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <SvgIcon.Zap /> Despachar Siguiente
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter by Campaign, Search & Status Filter Pills */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '8px',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  background: '#F8FAFC',
+                  padding: '8px 10px',
+                  borderRadius: '10px',
+                  border: '1px solid #E2E8F0'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#334155' }}>Campaña:</span>
+                  <select
+                    value={outboxCampaignFilter}
+                    onChange={(e) => setOutboxCampaignFilter(e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #CBD5E1',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      color: '#0F172A',
+                      background: '#FFFFFF',
+                      maxWidth: '250px'
+                    }}
+                  >
+                    <option value="all">Todas: {Object.keys(campaignTitleMap).length}</option>
+                    {Object.entries(campaignTitleMap).map(([cid, cname]) => (
+                      <option key={cid} value={cid}>
+                        {cname}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <input
+                  type="text"
+                  value={outboxSearch}
+                  onChange={(e) => setOutboxSearch(e.target.value)}
+                  placeholder="Buscar por nombre, teléfono o mensaje..."
+                  style={{
+                    flex: 1,
+                    minWidth: '180px',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.75rem'
+                  }}
+                />
+
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {[
+                    { k: 'all', l: `Todos: ${activeOutboxItems.length}` },
+                    { k: 'pending', l: `Pendientes: ${pendingOutboxCount}` },
+                    { k: 'dispatched', l: `Enviados: ${dispatchedOutboxCount}` },
+                    { k: 'replied', l: `Respondidos: ${repliedOutboxCount}` },
+                    { k: 'cancelled', l: `Cancelados: ${cancelledOutboxCount}` },
+                    { k: 'archived', l: `Archivados: ${archivedOutboxCount}` }
+                  ].map((f) => (
+                    <button
+                      key={f.k}
+                      type="button"
+                      onClick={() => setOutboxStatusFilter(f.k)}
+                      style={{
+                        padding: '5px 9px',
+                        borderRadius: '7px',
+                        border: outboxStatusFilter === f.k ? '1.5px solid #533B87' : '1px solid #CBD5E1',
+                        background: outboxStatusFilter === f.k ? '#533B87' : '#FFFFFF',
+                        color: outboxStatusFilter === f.k ? '#FFFFFF' : '#475569',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {f.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ maxHeight: '360px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '8px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                  <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 2 }}>
+                    <tr>
+                      <th style={{ padding: '8px', textAlign: 'left', width: '32px' }}>
+                        <input
+                          type="checkbox"
+                          checked={
+                            filteredOutbox.length > 0 &&
+                            filteredOutbox.slice(0, 80).every((i) => selectedOutboxIds.has(i.id))
+                          }
+                          onChange={(e) => {
+                            const visibleIds = filteredOutbox.slice(0, 80).map((i) => i.id);
+                            if (e.target.checked) {
+                              setSelectedOutboxIds((prev) => {
+                                const n = new Set(prev);
+                                visibleIds.forEach((id) => n.add(id));
+                                return n;
+                              });
+                            } else {
+                              setSelectedOutboxIds((prev) => {
+                                const n = new Set(prev);
+                                visibleIds.forEach((id) => n.delete(id));
+                                return n;
+                              });
+                            }
+                          }}
+                          style={{ accentColor: '#533B87', cursor: 'pointer' }}
+                        />
+                      </th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Contacto</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Campaña / Paso</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Mensaje</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Delay</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Estado</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOutbox.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '28px', textAlign: 'center', color: '#94A3B8' }}>
+                          No hay mensajes para este filtro.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredOutbox.slice(0, 80).map((item) => {
+                        const isChecked = selectedOutboxIds.has(item.id);
+                        const isArchived = isItemArchived(item);
+                        return (
+                          <tr
+                            key={item.id}
+                            style={{
+                              borderTop: '1px solid #F1F5F9',
+                              background: isChecked ? '#F5F3FF' : '#FFFFFF'
+                            }}
+                          >
+                            <td style={{ padding: '8px' }}>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  setSelectedOutboxIds((prev) => {
+                                    const n = new Set(prev);
+                                    if (e.target.checked) n.add(item.id);
+                                    else n.delete(item.id);
+                                    return n;
+                                  });
+                                }}
+                                style={{ accentColor: '#533B87', cursor: 'pointer' }}
+                              />
+                            </td>
+                            <td style={{ padding: '8px', fontWeight: 700 }}>
+                              <div>{item.displayName}</div>
+                              <div style={{ fontSize: '0.68rem', color: '#64748B', fontFamily: 'monospace' }}>
+                                +{item.normalizedPhone}
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              <div
+                                style={{
+                                  fontSize: '0.66rem',
+                                  fontWeight: 700,
+                                  color: '#64748B',
+                                  maxWidth: '150px',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                title={campaignTitleMap[item.campaignId] || item.campaignId}
+                              >
+                                {campaignTitleMap[item.campaignId] || 'Campaña'}
+                              </div>
+                              <div style={{ color: '#533B87', fontWeight: 700 }}>{item.stepLabel}</div>
+                            </td>
+                            <td style={{ padding: '8px', maxWidth: '240px', color: '#334155' }}>
+                              <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.renderedMessage}>
+                                {item.renderedMessage}
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px', fontFamily: 'monospace', color: '#059669', fontWeight: 700 }}>
+                              +{item.jitterSec}s
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              <span
+                                style={{
+                                  padding: '2px 7px',
+                                  borderRadius: '999px',
+                                  fontWeight: 800,
+                                  fontSize: '0.68rem',
+                                  background:
+                                    item.status === 'dispatched'
+                                      ? '#ECFDF5'
+                                      : item.status === 'replied'
+                                      ? '#F5F3FF'
+                                      : item.status === 'cancelled'
+                                      ? '#FEF2F2'
+                                      : '#EFF6FF',
+                                  color:
+                                    item.status === 'dispatched'
+                                      ? '#059669'
+                                      : item.status === 'replied'
+                                      ? '#533B87'
+                                      : item.status === 'cancelled'
+                                      ? '#DC2626'
+                                      : '#2563EB'
+                                }}
+                              >
+                                {item.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px' }}>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                {item.status === 'pending' && (
+                                  <a
+                                    href={`https://web.whatsapp.com/send?phone=${item.normalizedPhone}&text=${encodeURIComponent(item.renderedMessage)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={() => updateOutboxItemStatus(item.id, 'dispatched')}
+                                    style={{
+                                      padding: '3px 7px',
+                                      borderRadius: '6px',
+                                      background: '#10B981',
+                                      color: '#FFFFFF',
+                                      textDecoration: 'none',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700
+                                    }}
+                                  >
+                                    ↗ Enviar
+                                  </a>
+                                )}
+                                {item.status !== 'replied' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSimulateInboundReply(item)}
+                                    style={{
+                                      padding: '3px 7px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #DDD6FE',
+                                      background: '#F5F3FF',
+                                      color: '#533B87',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}
+                                    title="Marcar respuesta entrante"
+                                  >
+                                    <SvgIcon.MessageSquare /> Respuesta
+                                  </button>
+                                )}
+                                {isArchived ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnarchiveIds([item.id])}
+                                    style={{
+                                      padding: '4px 6px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #BFDBFE',
+                                      background: '#EFF6FF',
+                                      color: '#2563EB',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center'
+                                    }}
+                                    title="Restaurar mensaje"
+                                  >
+                                    <SvgIcon.Refresh />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleArchiveIds([item.id])}
+                                    style={{
+                                      padding: '4px 6px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #CBD5E1',
+                                      background: '#F8FAFC',
+                                      color: '#475569',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center'
+                                    }}
+                                    title="Archivar mensaje"
+                                  >
+                                    <SvgIcon.Archive />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ==================== SECTION 3: PREVIEW TICK TOOL & EXTENSIÓN CHROME ==================== */}
+        {activeSection === 'preview' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: '16px', alignItems: 'start' }}>
+            {/* Extension Popup Live Preview */}
+            <div
+              style={{
+                background: '#0F172A',
+                color: '#FFFFFF',
+                borderRadius: '14px',
+                padding: '16px',
+                border: '1px solid #334155',
+                boxShadow: '0 14px 30px rgba(0,0,0,0.2)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#94A3B8', letterSpacing: '0.04em' }}>
+                  EXTENSIÓN • POPUP PREVIEW
+                </span>
+                <span
+                  style={{
+                    fontSize: '0.68rem',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: 'rgba(16,185,129,0.18)',
+                    color: '#6EE7B7',
+                    fontWeight: 700
+                  }}
+                >
+                  Manifest V3
+                </span>
+              </div>
+
+              {/* Status Indicators */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px', background: '#1E293B' }}>
+                  <span style={{ fontSize: '0.78rem', color: '#CBD5E1' }}>Estado Sesión</span>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#10B981' }}>● WhatsApp Web Conectado</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px', background: '#1E293B' }}>
+                  <span style={{ fontSize: '0.78rem', color: '#CBD5E1' }}>Campaña Activa</span>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#C2F4E7' }}>
+                    {campaigns[0]?.name ? campaigns[0].name.slice(0, 24) : 'Lista para despachar'}
+                  </span>
+                </div>
+                <div style={{ padding: '10px 12px', borderRadius: '8px', background: '#1E293B' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#CBD5E1' }}>Lote en Progreso</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#38BDF8' }}>
+                      {activeBatchProgress}/{dailyBatchLimit}
+                    </span>
+                  </div>
+                  <div style={{ width: '100%', height: '8px', background: '#0F172A', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        width: `${Math.min(100, (activeBatchProgress / dailyBatchLimit) * 100)}%`,
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #10B981, #38BDF8)'
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Emergency Pause Button */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setSimPaused(!simPaused)}
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: simPaused ? '#10B981' : '#EF4444',
+                    color: '#FFFFFF',
+                    fontWeight: 800,
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {simPaused ? <><SvgIcon.Play /> Reanudar</> : <><SvgIcon.Pause /> Pausa</>}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSimulateNextDispatch}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #334155',
+                    background: '#1E293B',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    fontSize: '0.76rem',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <SvgIcon.Zap /> Simular Tick
+                </button>
+              </div>
+            </div>
+
+            {/* Live Console & Installation Guide */}
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '14px',
+                padding: '16px',
+                border: '1px solid #E2E8F0',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+              }}
+            >
+              <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <SvgIcon.Cpu /> Consola Anti-Baneo
+              </div>
+              <div
+                style={{
+                  background: '#0F172A',
+                  color: '#A7F3D0',
+                  fontFamily: 'monospace',
+                  fontSize: '0.72rem',
+                  padding: '10px',
+                  borderRadius: '8px',
+                  maxHeight: '165px',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '5px'
+                }}
+              >
+                {simLog.map((line, idx) => (
+                  <div key={idx}>{line}</div>
+                ))}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: '#475569', background: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                <strong>Ruta Extensión Chrome:</strong>
+                <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#533B87', marginTop: '4px', wordBreak: 'break-all' }}>
+                  D:\1_jose_angel\1_GitHub\Quarz\QZ-HUB\extensions\zentry-ws-dispatcher
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  if (isStandalone) {
+    return contentNode;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.6)',
+        backdropFilter: 'blur(4px)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px'
+      }}
+      onClick={onClose}
+    >
+      {contentNode}
+    </div>
+  );
+};

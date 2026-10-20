@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { REAL_LEADS_EXPO_MATERNIDAD, LeadData } from './data/realLeads';
+import { REAL_LEADS_EXPO_MATERNIDAD, LeadData, getSavedSheetTabs } from './data/realLeads';
 import { OriginalWizard } from './components/OriginalWizard';
 import { OriginalAdmin } from './components/OriginalAdmin';
-import { subscribeToCloudLeads } from './services/cloudCrm';
+import { TickToolModal } from './components/TickToolModal';
+import { subscribeToCloudLeads, subscribeToCloudTabs } from './services/cloudCrm';
 
 // URL del CRM dedicada si se especifica en variables de entorno (ej: https://zentry-crm.web.app)
 const CRM_EXTERNAL_URL = import.meta.env.VITE_CRM_URL || '';
@@ -10,8 +11,26 @@ const CRM_EXTERNAL_URL = import.meta.env.VITE_CRM_URL || '';
 export function App() {
   const GOAL_LEADS = 120;
   const [leads, setLeads] = useState<LeadData[]>(REAL_LEADS_EXPO_MATERNIDAD);
+  const [sheetTabs, setSheetTabs] = useState<string[]>(() => getSavedSheetTabs());
 
-  // Detección automática de la ruta inicial
+  // Detección de ruta de Tick Tool (Campañas WhatsApp / Blueticks Alternative)
+  const checkIsTickToolRoute = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+
+    return (
+      path.startsWith('/tick-tool') ||
+      path.startsWith('/campanas') ||
+      search.includes('view=tick-tool') ||
+      search.includes('view=ticktool') ||
+      hash.includes('tick-tool') ||
+      hash.includes('ticktool')
+    );
+  };
+
+  // Detección automática de la ruta inicial CRM
   const checkIsCrmRoute = (): boolean => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
@@ -29,11 +48,13 @@ export function App() {
     );
   };
 
+  const [isTickToolRoute, setIsTickToolRoute] = useState<boolean>(() => checkIsTickToolRoute());
   const [isCrmRoute, setIsCrmRoute] = useState<boolean>(() => checkIsCrmRoute());
 
   // Escucha cambios en el historial de navegación (Botones Atrás / Adelante del navegador)
   useEffect(() => {
     const handlePopState = () => {
+      setIsTickToolRoute(checkIsTickToolRoute());
       setIsCrmRoute(checkIsCrmRoute());
     };
 
@@ -43,11 +64,17 @@ export function App() {
 
   // Escucha en tiempo real de Firestore para todos los clientes (Multi-dispositivo en la nube)
   useEffect(() => {
-    const unsubscribe = subscribeToCloudLeads((cloudLeads) => {
+    const unsubscribeLeads = subscribeToCloudLeads((cloudLeads) => {
       setLeads(cloudLeads);
     });
+    const unsubscribeTabs = subscribeToCloudTabs((cloudTabs) => {
+      setSheetTabs(cloudTabs);
+    });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeLeads();
+      unsubscribeTabs();
+    };
   }, []);
 
   const progressPercent = Math.min(100, (leads.length / GOAL_LEADS) * 100);
@@ -74,6 +101,7 @@ export function App() {
     try {
       window.history.pushState(null, '', '/crm');
     } catch (e) {}
+    setIsTickToolRoute(false);
     setIsCrmRoute(true);
   };
 
@@ -82,8 +110,23 @@ export function App() {
     try {
       window.history.pushState(null, '', '/');
     } catch (e) {}
+    setIsTickToolRoute(false);
     setIsCrmRoute(false);
   };
+
+  // ── MODO 0: STANDALONE TICK TOOL (/tick-tool o ?view=tick-tool) ────────────
+  if (isTickToolRoute) {
+    return (
+      <div id="app-container" style={{ overflowY: 'auto', background: '#0B1120', minHeight: '100vh' }}>
+        <TickToolModal
+          leads={leads}
+          sheetTabs={sheetTabs}
+          isStandalone={true}
+          onClose={handleGoToCrm}
+        />
+      </div>
+    );
+  }
 
   // ── MODO 1: STANDALONE CRM (.web.app/crm) ──────────────────────────────────
   if (isCrmRoute) {

@@ -168,16 +168,23 @@ export async function deleteCloudTab(tabNameToRemove: string): Promise<string[]>
 export function subscribeToCloudLeads(onLeadsChange: (leads: LeadData[]) => void): () => void {
   const q = query(collection(db, LEADS_COLLECTION));
 
+  const baseById = new Map<string, LeadData>(
+    REAL_LEADS_EXPO_MATERNIDAD.map((r) => [r.id, r])
+  );
+
   const unsubscribe = onSnapshot(
     q,
     (snapshot) => {
       const firestoreLeads: LeadData[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as LeadData;
+        const resolvedId = docSnap.id || data.id;
+        const base = baseById.get(resolvedId);
         firestoreLeads.push({
+          ...(base || {}),
           ...data,
-          id: docSnap.id || data.id
-        });
+          id: resolvedId
+        } as LeadData);
       });
 
       // Evitar duplicados con los leads de respaldo

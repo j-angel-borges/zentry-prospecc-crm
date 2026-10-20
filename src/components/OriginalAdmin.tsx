@@ -11,6 +11,7 @@ import {
   clearCloudNCLogs,
   deleteCloudLead
 } from '../services/cloudCrm';
+import { TickToolModal } from './TickToolModal';
 
 interface Props {
   leads: LeadData[];
@@ -1140,7 +1141,7 @@ const ColumnFilterPopover: React.FC<ColumnFilterPopoverProps> = ({
 
 // ─── Main Admin Panel Component ───────────────────────────────────────────────
 export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, onDeleteLead }) => {
-  const [viewMode, setViewMode] = useState<'spreadsheet' | 'crm'>('spreadsheet');
+  const [viewMode, setViewMode] = useState<'spreadsheet' | 'crm' | 'campaigns'>('spreadsheet');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
@@ -1171,6 +1172,25 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
   const [isAddingTab, setIsAddingTab] = useState<boolean>(false);
   const [newTabInput, setNewTabInput] = useState<string>('');
 
+  // Tick Tool (Campañas WhatsApp) Checkbox Selection State
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: 'ZENTRY_CRM_SELECTION',
+            leadIds: selectedLeadIds,
+            selectedLeadIds,
+            activeTab
+          },
+          '*'
+        );
+      }
+    } catch (e) {}
+  }, [selectedLeadIds, activeTab]);
+
   // Modal de Historial State
   const [activeHistoryModal, setActiveHistoryModal] = useState<{
     lead: LeadData;
@@ -1196,6 +1216,37 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
       return {};
     }
   });
+
+  // Broadcast resolved leads & activeTab to parent QZ-Hub Tick Tool
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+        const resolvedLeads = leads.map((l) => {
+          const edit = localEdits[l.id] || {};
+          const merged = { ...l, ...edit };
+          const tab = merged.sheetTab && merged.sheetTab.trim() !== '' ? merged.sheetTab : 'Expo M (JA)';
+          return {
+            id: merged.id,
+            momName: merged.nombreMadre || 'Sin nombre',
+            phone: merged.celular || '',
+            origin: tab,
+            district: merged.distrito || 'Lima',
+            childAge: merged.edadHijos || '',
+            interestNotes: merged.observaciones || ''
+          };
+        });
+        window.parent.postMessage(
+          {
+            type: 'ZENTRY_CRM_LEADS_SYNC',
+            leads: resolvedLeads,
+            activeTab,
+            sheetTabs
+          },
+          '*'
+        );
+      }
+    } catch (e) {}
+  }, [leads, localEdits, activeTab, sheetTabs]);
 
   // Save collapsed cols whenever changed
   useEffect(() => {
@@ -1598,11 +1649,11 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
   };
 
   const crmStages: { key: LeadData['estadoCrm']; label: string; count: number; color: string }[] = [
-    { key: 'nuevo', label: '📥 Nuevos Leads', count: filteredLeads.filter(l => (getLeadField(l, 'estadoCrm') || 'nuevo') === 'nuevo').length, color: '#4A90E2' },
-    { key: 'contactado', label: '📞 Contactados', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'contactado').length, color: '#F59E0B' },
-    { key: 'demo_agendada', label: '📅 Demo Agendada', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'demo_agendada').length, color: '#8B5CF6' },
-    { key: 'ganado', label: '🏆 Ventas Cerradas', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'ganado').length, color: '#10B981' },
-    { key: 'descartado', label: '🚫 Descartados', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'descartado').length, color: '#EF4444' }
+    { key: 'nuevo', label: 'Nuevos Leads', count: filteredLeads.filter(l => (getLeadField(l, 'estadoCrm') || 'nuevo') === 'nuevo').length, color: '#4A90E2' },
+    { key: 'contactado', label: 'Contactados', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'contactado').length, color: '#F59E0B' },
+    { key: 'demo_agendada', label: 'Demo Agendada', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'demo_agendada').length, color: '#8B5CF6' },
+    { key: 'ganado', label: 'Ventas Cerradas', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'ganado').length, color: '#10B981' },
+    { key: 'descartado', label: 'Descartados', count: filteredLeads.filter(l => getLeadField(l, 'estadoCrm') === 'descartado').length, color: '#EF4444' }
   ];
 
   const collapsedCount = Object.values(collapsedCols).filter(Boolean).length;
@@ -1613,8 +1664,13 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
       <div className="admin-header-row" style={{ marginBottom: '10px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#1E293B', margin: 0 }}>
-              🚀 Zentry CRM
+            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1E293B', margin: 0, display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+              <span>Zentry CRM</span>
             </h2>
             <span style={{ background: '#EFF6FF', color: '#2563EB', padding: '2px 8px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700, border: '1px solid #BFDBFE' }}>
               {activeTab === '__ALL__' ? 'Todas' : activeTab} ({filteredLeads.length})
@@ -1624,8 +1680,8 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
 
         {/* Action Controls */}
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* View mode toggle */}
-          <div style={{ display: 'flex', background: '#E2E8F0', padding: '2px', borderRadius: '8px' }}>
+          {/* View mode toggle: 3 Full-Screen Views */}
+          <div style={{ display: 'flex', background: '#E2E8F0', padding: '2px', borderRadius: '8px', gap: '2px' }}>
             <button
               onClick={() => setViewMode('spreadsheet')}
               style={{
@@ -1640,7 +1696,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                 boxShadow: viewMode === 'spreadsheet' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px'
+                gap: '5px'
               }}
             >
               <Icons.Table />
@@ -1660,15 +1716,50 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                 boxShadow: viewMode === 'crm' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px'
+                gap: '5px'
               }}
             >
               <Icons.Kanban />
               <span>Kanban</span>
             </button>
+            <button
+              onClick={() => setViewMode('campaigns')}
+              style={{
+                border: 'none',
+                padding: '5px 10px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                background: viewMode === 'campaigns' ? '#10B981' : 'transparent',
+                color: viewMode === 'campaigns' ? '#FFFFFF' : '#059669',
+                boxShadow: viewMode === 'campaigns' ? '0 1px 3px rgba(16,185,129,0.28)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+              title="Vista de Campañas WhatsApp"
+            >
+              <Icons.MessageCircle />
+              <span>Campañas</span>
+              {selectedLeadIds.length > 0 && (
+                <span
+                  style={{
+                    background: viewMode === 'campaigns' ? '#FFFFFF' : '#10B981',
+                    color: viewMode === 'campaigns' ? '#059669' : '#FFFFFF',
+                    borderRadius: '10px',
+                    padding: '0 6px',
+                    fontSize: '0.68rem',
+                    fontWeight: 800
+                  }}
+                >
+                  {selectedLeadIds.length}
+                </span>
+              )}
+            </button>
           </div>
 
-          {/* Toggle Expand all texts button */}
+          {/* Toggle Expand all texts button (SVG only) */}
           {viewMode === 'spreadsheet' && (
             <button
               onClick={() => setExpandAllTexts(!expandAllTexts)}
@@ -1677,21 +1768,19 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                 color: '#2563EB',
                 border: '1px solid #CBD5E1',
                 borderRadius: '8px',
-                padding: '5px 10px',
-                fontSize: '0.78rem',
-                fontWeight: 600,
+                padding: '6px 8px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px'
+                justifyContent: 'center'
               }}
               title={expandAllTexts ? 'Contraer textos' : 'Expandir textos'}
             >
               {expandAllTexts ? <Icons.ChevronUp /> : <Icons.ChevronDown />}
-              <span>{expandAllTexts ? 'Contraer' : 'Expandir'}</span>
             </button>
           )}
 
+          {/* Export CSV button (SVG only) */}
           <button
             onClick={exportCSV}
             style={{
@@ -1699,43 +1788,18 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
               color: '#334155',
               border: '1px solid #CBD5E1',
               borderRadius: '8px',
-              padding: '5px 12px',
-              fontSize: '0.78rem',
-              fontWeight: 600,
+              padding: '6px 8px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px'
+              justifyContent: 'center'
             }}
-            title="Exportar CSV"
+            title="Descargar CSV"
           >
             <Icons.Download />
-            <span>CSV</span>
           </button>
 
-          <a
-            href="https://docs.google.com/spreadsheets/d/1AM2PYEB8LbqvFU2QUSbmpaKdJDYqtuXN-dm5DApmouk/edit?gid=0#gid=0"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              background: '#FFFFFF',
-              color: '#10B981',
-              border: '1px solid #86EFAC',
-              borderRadius: '8px',
-              padding: '5px 10px',
-              fontSize: '0.78rem',
-              fontWeight: 600,
-              textDecoration: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            title="Abrir Google Sheets Oficial"
-          >
-            <Icons.ExternalLink />
-            <span>Sheets</span>
-          </a>
-
+          {/* Back to Prospecc button (SVG only) */}
           <button
             onClick={onClose}
             style={{
@@ -1743,24 +1807,22 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
               color: 'white',
               border: 'none',
               borderRadius: '8px',
-              padding: '6px 14px',
-              fontSize: '0.78rem',
-              fontWeight: 700,
+              padding: '6px 8px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
+              justifyContent: 'center',
               boxShadow: '0 2px 5px rgba(37,99,235,0.25)'
             }}
-            title="Volver a la herramienta de prospección"
+            title="Volver a Prospección"
           >
             <Icons.ArrowLeft />
-            <span>Prospecc</span>
           </button>
         </div>
       </div>
 
       {/* ── Filter & Columns Toolbar ──────────────────────────────────────── */}
+      {viewMode !== 'campaigns' && (
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
         {/* Search Input */}
         <div style={{ position: 'relative', flex: '1', minWidth: '240px' }}>
@@ -1926,6 +1988,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
           </div>
         )}
       </div>
+      )}
 
       {/* ── VIEW 1: SPREADSHEET TABLE ─────────────────────────────────────── */}
       {viewMode === 'spreadsheet' && (
@@ -1933,6 +1996,24 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
           <table className="spreadsheet-table" style={{ width: '100%', minWidth: '100%', borderRadius: 0 }}>
             <thead>
               <tr>
+                <th style={{ width: '36px', minWidth: '36px', textAlign: 'center', background: '#F8FAFC' }}>
+                  <input
+                    type="checkbox"
+                    checked={filteredLeads.length > 0 && filteredLeads.every(l => selectedLeadIds.includes(l.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        const next = new Set(selectedLeadIds);
+                        filteredLeads.forEach(l => next.add(l.id));
+                        setSelectedLeadIds(Array.from(next));
+                      } else {
+                        const filteredSet = new Set(filteredLeads.map(l => l.id));
+                        setSelectedLeadIds(prev => prev.filter(id => !filteredSet.has(id)));
+                      }
+                    }}
+                    style={{ cursor: 'pointer', accentColor: '#10B981' }}
+                    title="Seleccionar / deseleccionar leads visibles para Campaña WhatsApp"
+                  />
+                </th>
                 {COLUMNS.map(col => {
                   const isHidden = isColCollapsed(col.key);
 
@@ -2097,7 +2178,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
             <tbody>
               {filteredLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: '#64748B' }}>
+                  <td colSpan={16} style={{ textAlign: 'center', padding: '40px', color: '#64748B' }}>
                     <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>No hay prospectos en la pestaña "{activeTab === '__ALL__' ? 'Todas' : activeTab}".</div>
                     <div style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '4px' }}>
                       Puedes registrar nuevos leads con el formulario seleccionando esta pestaña o mover prospectos desde otra pestaña.
@@ -2113,9 +2194,25 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                   const currentObserCalls = getLeadField(lead, 'obserCalls') || '';
                   const leadHistory = getLeadHistory(lead);
                   const leadTab = getLeadSheetTab(lead);
+                  const isRowSelected = selectedLeadIds.includes(lead.id);
 
                   return (
-                    <tr key={lead.id}>
+                    <tr key={lead.id} style={isRowSelected ? { background: '#ECFDF5' } : undefined}>
+                      <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                        <input
+                          type="checkbox"
+                          checked={isRowSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedLeadIds(prev => [...prev, lead.id]);
+                            } else {
+                              setSelectedLeadIds(prev => prev.filter(id => id !== lead.id));
+                            }
+                          }}
+                          style={{ cursor: 'pointer', accentColor: '#10B981' }}
+                          title="Seleccionar este prospecto para Campaña WhatsApp"
+                        />
+                      </td>
                       {/* 1. Nombre Madre + Selector de Pestaña para traspaso */}
                       {isColCollapsed('nombreMadre') ? (
                         <td style={{ background: '#F8FAFC', textAlign: 'center', borderLeft: '2px solid #CBD5E1', borderRight: '2px solid #CBD5E1', padding: '4px 0' }} />
@@ -2486,14 +2583,23 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <div>
                               <strong style={{ fontSize: '0.88rem', color: '#0F172A', display: 'block' }}>{getLeadField(lead, 'nombreMadre')}</strong>
-                              <span style={{ fontSize: '0.68rem', color: '#2563EB', fontWeight: 700 }}>📂 {leadTab}</span>
+                              <span style={{ fontSize: '0.68rem', color: '#2563EB', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                {leadTab}
+                              </span>
                             </div>
                             <span style={{ fontSize: '0.72rem', color: '#EF4444', fontWeight: 700 }}>Dolor: {lead.nivelPreocupacion}/10</span>
                           </div>
 
-                          <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                            <div>📍 {getLeadField(lead, 'distrito')} • 👶 {lead.edadHijos}</div>
-                            <div style={{ marginTop: '2px' }}>📞 {getLeadField(lead, 'celular')}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#64748B', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                              <span>{getLeadField(lead, 'distrito')} • {lead.edadHijos}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <Icons.Phone />
+                              <span>{getLeadField(lead, 'celular')}</span>
+                            </div>
                           </div>
 
                           {getLeadField(lead, 'observaciones') && (
@@ -2510,8 +2616,9 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                           )}
 
                           {getLeadField(lead, 'obserCalls') && (
-                            <div style={{ fontSize: '0.75rem', color: '#0F766E', background: '#F0FDFA', padding: '5px', borderRadius: '4px' }}>
-                              💡 <ExpandableText text={getLeadField(lead, 'obserCalls')} maxChars={35} />
+                            <div style={{ fontSize: '0.75rem', color: '#0F766E', background: '#F0FDFA', padding: '5px', borderRadius: '4px', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                              <ExpandableText text={getLeadField(lead, 'obserCalls')} maxChars={35} />
                             </div>
                           )}
 
@@ -2565,6 +2672,20 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── VIEW 3: CAMPAÑAS WHATSAPP (Full View) ─────────────────────────── */}
+      {viewMode === 'campaigns' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 125px)', background: '#FFFFFF', borderRadius: '12px 12px 0 0', overflow: 'hidden', border: '1px solid #E2E8F0', borderBottom: 'none' }}>
+          <TickToolModal
+            leads={leads}
+            sheetTabs={sheetTabs}
+            preselectedLeadIds={selectedLeadIds}
+            initialSourceTab={activeTab === '__ALL__' ? 'Expo M (JA)' : activeTab}
+            isStandalone={true}
+            onClose={() => setViewMode('spreadsheet')}
+          />
         </div>
       )}
 
@@ -2622,7 +2743,8 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                   }}
                   title={`Ver prospectos de la pestaña ${tab}`}
                 >
-                  <span>📊 {tab}</span>
+                  <Icons.Table />
+                  <span>{tab}</span>
                   <span
                     style={{
                       background: isActive ? '#10B981' : '#CBD5E1',
