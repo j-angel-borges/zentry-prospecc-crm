@@ -6,15 +6,7 @@ export interface CallLogEntry {
   observation?: string;
 }
 
-export const DEFAULT_SHEET_TABS = [
-  'Expo M (JA)',
-  'Expo M (R)',
-  'Villa Caritas',
-  'La Rambla',
-  'Hijos F-Rp',
-  'MT',
-  'Reclutamiento (RP)'
-];
+export const DEFAULT_SHEET_TABS = ['Expo M (JA)', 'Expo M (R)', 'Villa Caritas', 'La Rambla', 'Hijos F-Rp', 'MT'];
 export const LS_SHEET_TABS = 'zentry_sheet_tabs_v2';
 export const LS_ACTIVE_SHEET_TAB = 'zentry_active_sheet_tab_v2';
 

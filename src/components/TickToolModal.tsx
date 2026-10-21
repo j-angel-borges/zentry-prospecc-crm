@@ -645,12 +645,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   }, []);
 
   // Sync audience selection when switching origin tab in 'tab' mode
-  const getLeadTab = (l: LeadData) => {
-    if (l.id?.startsWith('rec-') || (l as any).tipoLead === 'rec') {
-      return 'Reclutamiento (RP)';
-    }
-    return l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)';
-  };
+  const getLeadTab = (l: LeadData) => (l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)');
 
   useEffect(() => {
     if (audienceMode === 'tab') {

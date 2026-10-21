@@ -1336,11 +1336,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
   };
 
   // Resolver a qué pestaña pertenece el lead (por defecto Expo M (JA))
-  // Las fuentes de reclutamiento (prefijo rec- o tipoLead === 'rec') se consolidan bajo 'Reclutamiento (RP)'
   const getLeadSheetTab = (lead: LeadData): string => {
-    if (lead.id?.startsWith('rec-') || (lead as any).tipoLead === 'rec') {
-      return 'Reclutamiento (RP)';
-    }
     const tab = getLeadField(lead, 'sheetTab');
     return tab && tab.trim() !== '' ? tab : 'Expo M (JA)';
   };
