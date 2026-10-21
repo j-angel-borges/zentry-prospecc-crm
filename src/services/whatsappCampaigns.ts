@@ -123,22 +123,85 @@ export function normalizePeruPhone(rawPhone?: string): {
   };
 }
 
+const PERU_KNOWN_SURNAMES = new Set([
+  'romero', 'sandoval', 'abdala', 'gutierrez', 'carrasco', 'balladares', 'tello',
+  'quispe', 'rodriguez', 'gonzales', 'gonzalez', 'garcia', 'perez', 'sanchez',
+  'ramirez', 'torres', 'flores', 'diaz', 'vasquez', 'castro', 'morales', 'martinez',
+  'lopez', 'mendoza', 'chavez', 'espinoza', 'rojas', 'alvarez', 'herrera', 'medina',
+  'paredes', 'silva', 'navarro', 'salazar', 'cruz', 'reyes', 'vega', 'delgado',
+  'vargas', 'rios', 'benitez', 'acosta', 'ponce', 'palacios', 'guerrero', 'avila',
+  'valencia', 'castillo', 'zamora', 'prado', 'tantalean', 'caballero', 'campos'
+]);
+
 /**
  * Extrae First Name y Display Name limpios de un Lead
+ * - Elimina prefijos "SR", "SRA", "SR.", "SRA.", "DON", "DOÑA", "FAMILIA"
+ * - Limpia sufijos o separadores de agenda tipo "/" ("Ariadna / MmDeAntuane / Mt" -> "Ariadna")
+ * - Detecta si solo se dispone de un apellido aislado ("Romero" -> "Familia Romero")
+ * - Corrige inversiones de listas escolares tipo "APELLIDO NOMBRE" ("Sandoval Marina" -> "Marina")
  */
 export function extractLeadNames(lead: Partial<LeadData>): {
   firstName: string;
   displayName: string;
 } {
-  const rawName = (lead.nombreMadre || '').trim();
-  if (!rawName) {
-    return { firstName: 'Mamá', displayName: 'Estimada Familia' };
+  let rawName = (lead.nombreMadre || '').trim();
+
+  // Si contiene separador de agenda con '/', tomar solo la primera parte
+  if (rawName.includes('/')) {
+    rawName = rawName.split('/')[0].trim();
   }
-  const formatted = rawName
+
+  // Eliminar prefijos comunes de cortesía o roles
+  rawName = rawName
+    .replace(/^(?:sr\.?|sra\.?|señor\.?|señora\.?|don|doña|familia|dr\.?|dra\.?)\s+/i, '')
+    .trim();
+
+  if (!rawName) {
+    return { firstName: 'Familia', displayName: 'Estimada Familia' };
+  }
+
+  const tokens = rawName
     .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-  const firstName = formatted.split(/\s+/)[0] || formatted;
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+
+  if (tokens.length === 0) {
+    return { firstName: 'Familia', displayName: 'Estimada Familia' };
+  }
+
+  // Caso 1: Solo un término (ej. "Romero", "Sandoval", "Abdala")
+  if (tokens.length === 1) {
+    const single = tokens[0];
+    const isSurname = PERU_KNOWN_SURNAMES.has(single.toLowerCase());
+    if (isSurname) {
+      return {
+        firstName: `Familia ${single}`,
+        displayName: `Familia ${single}`
+      };
+    }
+    return {
+      firstName: single,
+      displayName: single
+    };
+  }
+
+  // Caso 2: Dos o más términos. Detectar si el primer término es un apellido y el segundo un nombre de pila
+  // Ejemplo: "Sandoval Marina" -> firstName: "Marina", displayName: "Marina Sandoval"
+  const firstLower = tokens[0].toLowerCase();
+  const secondLower = tokens[1]?.toLowerCase();
+  if (PERU_KNOWN_SURNAMES.has(firstLower) && secondLower && !PERU_KNOWN_SURNAMES.has(secondLower)) {
+    const givenName = tokens[1];
+    const surname = tokens[0];
+    const rest = tokens.slice(2).join(' ');
+    const reordered = rest ? `${givenName} ${rest} ${surname}` : `${givenName} ${surname}`;
+    return {
+      firstName: givenName,
+      displayName: reordered
+    };
+  }
+
+  const firstName = tokens[0];
+  const formatted = tokens.join(' ');
   return {
     firstName,
     displayName: formatted
@@ -155,7 +218,7 @@ export function renderDynamicMessage(template: string, lead: Partial<LeadData>):
   const distrito = (lead.distrito || 'Lima').replace(/,+$/, '').trim();
   const origen = (lead.sheetTab || 'Expo Maternidad').replace(/\s*\(.*?\)\s*/g, '').trim();
 
-  return (template || '')
+  let rendered = (template || '')
     .replace(/\{First Name\}/gi, firstName)
     .replace(/\{Display Name\}/gi, displayName)
     .replace(/\{Phone\}/gi, phoneInfo.display || lead.celular || '')
@@ -163,6 +226,14 @@ export function renderDynamicMessage(template: string, lead: Partial<LeadData>):
     .replace(/\{Origen\}/gi, origen)
     .replace(/Powered by blueticks\.co/gi, '')
     .trim();
+
+  // Limpiar espacios dobles o puntuaciones huérfanas
+  rendered = rendered
+    .replace(/Hola\s*,\s*/gi, 'Hola, ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return rendered;
 }
 
 /**

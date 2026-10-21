@@ -84,7 +84,11 @@ export function App() {
   };
 
   const handleUpdateLead = (updated: LeadData) => {
-    setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+    setLeads((prev) => {
+      const exists = prev.some((l) => l.id === updated.id);
+      if (!exists) return [updated, ...prev];
+      return prev.map((l) => (l.id === updated.id ? updated : l));
+    });
   };
 
   const handleDeleteLead = (leadId: string) => {

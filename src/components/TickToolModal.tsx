@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LeadData, DEFAULT_SHEET_TABS } from '../data/realLeads';
+import { saveCloudLead } from '../services/cloudCrm';
 import {
   FollowUpStep,
   WhatsAppCampaign,
@@ -21,8 +22,11 @@ interface TickToolModalProps {
   sheetTabs?: string[];
   preselectedLeadIds?: string[];
   initialSourceTab?: string;
+  activeSourceTab?: string;
+  onSelectTab?: (tab: string) => void;
   isStandalone?: boolean;
   onClose?: () => void;
+  onAddManualLead?: (lead: LeadData) => void;
 }
 
 const toLocalDateTimeInputValue = (epochMs: number): string => {
@@ -193,21 +197,70 @@ const SvgIcon = {
       <line x1="21" y1="3" x2="14" y2="10" />
       <line x1="3" y1="21" x2="10" y2="14" />
     </svg>
+  ),
+  Edit3: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  ),
+  Plus: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  ),
+  Save: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  ),
+  UserPlus: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <line x1="20" y1="8" x2="20" y2="14" />
+      <line x1="23" y1="11" x2="17" y2="11" />
+    </svg>
+  ),
+  Check: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
   )
 };
 
-const MESSAGE_TEMPLATES = [
+export interface CustomCampaignTemplate {
+  id: string;
+  title: string;
+  body: string;
+  attachments?: Array<{ id: string; name: string; type: string; size: number; dataUrl: string }>;
+  createdAt?: number;
+}
+
+const DEFAULT_MESSAGE_TEMPLATES: CustomCampaignTemplate[] = [
   {
+    id: 'tpl-expo-maternidad',
     title: 'Post-Evento Expo Maternidad',
-    body: 'Hola {First Name}, te saluda José Ángel del equipo de ZentryOS. Qué gusto haber conversado contigo en {Origen}. Te escribo al {Phone} para compartirte el acceso a la evaluación privada de bienestar digital para tu familia en {Distrito}. ¿Te queda bien si te envío el resumen por aquí?'
+    body: 'Hola {First Name}, te saluda José Ángel del equipo de ZentryOS. Qué gusto haber conversado contigo en {Origen}. Te escribo al {Phone} para compartirte el acceso a la evaluación privada de bienestar digital para tu familia en {Distrito}. ¿Te queda bien si te envío el resumen por aquí?',
+    attachments: [],
+    createdAt: 1700000000000
   },
   {
+    id: 'tpl-demo-virtual',
     title: 'Agendar Demo Virtual',
-    body: 'Hola {First Name}, espero que todo vaya excelente en casa. Revisando tu ficha de {Origen}, reservamos 2 cupos esta semana para mostrarte en vivo cómo ZentryOS protege la atención de tus hijos sin peleas en casa. ¿Prefieres jueves 7:30 pm o sábado por la mañana?'
+    body: 'Hola {First Name}, espero que todo vaya excelente en casa. Revisando tu ficha de {Origen}, reservamos 2 cupos esta semana para mostrarte en vivo cómo ZentryOS protege la atención de tus hijos sin peleas en casa. ¿Prefieres jueves 7:30 pm o sábado por la mañana?',
+    attachments: [],
+    createdAt: 1700000001000
   },
   {
+    id: 'tpl-reactivacion-directa',
     title: 'Reactivación Directa',
-    body: '¡Hola {Display Name}! Te escribimos desde ZentryOS. Sabemos que la rutina familiar es intensa; solo quería confirmar si pudiste revisar la propuesta o si prefieres que coordinemos una breve llamada de 5 minutos.'
+    body: '¡Hola {Display Name}! Te escribimos desde ZentryOS. Sabemos que la rutina familiar es intensa; solo quería confirmar si pudiste revisar la propuesta o si prefieres que coordinemos una breve llamada de 5 minutos.',
+    attachments: [],
+    createdAt: 1700000002000
   }
 ];
 
@@ -216,22 +269,50 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   sheetTabs = DEFAULT_SHEET_TABS,
   preselectedLeadIds = [],
   initialSourceTab = 'Expo M (JA)',
+  activeSourceTab,
+  onSelectTab,
   isStandalone = false,
-  onClose
+  onClose,
+  onAddManualLead
 }) => {
   // Top navigation tabs: Wizard | Outbox Queue | Extension Preview
   const [activeSection, setActiveSection] = useState<'wizard' | 'queue' | 'preview'>('wizard');
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
 
+  // Extra manually added leads (stored locally & synced to cloud)
+  const [extraLeads, setExtraLeads] = useState<LeadData[]>(() => {
+    try {
+      const raw = localStorage.getItem('zentry_manual_leads_v2');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const allLeads = useMemo(() => {
+    const ids = new Set(leads.map((l) => l.id));
+    const uniqueExtras = extraLeads.filter((el) => !ids.has(el.id));
+    return [...leads, ...uniqueExtras];
+  }, [leads, extraLeads]);
+
   // Step 1: Audience State
   const [audienceMode, setAudienceMode] = useState<'tab' | 'manual'>(
     preselectedLeadIds.length > 0 ? 'manual' : 'tab'
   );
-  const [selectedOriginTab, setSelectedOriginTab] = useState<string>(initialSourceTab || 'Expo M (JA)');
+  const [selectedOriginTab, setSelectedOriginTab] = useState<string>(
+    activeSourceTab || initialSourceTab || 'Expo M (JA)'
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(preselectedLeadIds));
   const [audienceSearch, setAudienceSearch] = useState<string>('');
-  const [audienceExpanded, setAudienceExpanded] = useState<boolean>(false);
   const audTableRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync selected origin tab when activeSourceTab changes from parent bottom tabs
+  useEffect(() => {
+    if (activeSourceTab !== undefined) {
+      setSelectedOriginTab(activeSourceTab);
+      setAudienceMode('tab');
+    }
+  }, [activeSourceTab]);
 
   // Outbox Queue Filters, Selection & Archiving State
   const [outboxStatusFilter, setOutboxStatusFilter] = useState<string>('all');
@@ -256,11 +337,222 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     }
   };
 
+  // Templates State with localStorage persistence
+  const [templates, setTemplates] = useState<CustomCampaignTemplate[]>(() => {
+    try {
+      const raw = localStorage.getItem('zentry_custom_templates_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (err) {
+      console.warn('Error reading saved templates:', err);
+    }
+    return DEFAULT_MESSAGE_TEMPLATES;
+  });
+
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(() => {
+    try {
+      const raw = localStorage.getItem('zentry_custom_templates_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch {}
+    return DEFAULT_MESSAGE_TEMPLATES[0].id;
+  });
+
+  // Modals & UI helpers state
+  const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState<boolean>(false);
+  const [saveTemplateTitle, setSaveTemplateTitle] = useState<string>('');
+  const [editingTemplate, setEditingTemplate] = useState<CustomCampaignTemplate | null>(null);
+  const [editTemplateTitle, setEditTemplateTitle] = useState<string>('');
+  const [editTemplateBody, setEditTemplateBody] = useState<string>('');
+
+  const [isManualNumberModalOpen, setIsManualNumberModalOpen] = useState<boolean>(false);
+  const [manualPhoneInput, setManualPhoneInput] = useState<string>('');
+  const [manualNameInput, setManualNameInput] = useState<string>('');
+  const [manualDistrictInput, setManualDistrictInput] = useState<string>('');
+  const [manualTabInput, setManualTabInput] = useState<string>('');
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  };
+
+  const persistTemplates = (next: CustomCampaignTemplate[]) => {
+    setTemplates(next);
+    try {
+      localStorage.setItem('zentry_custom_templates_v2', JSON.stringify(next));
+    } catch (err) {
+      console.warn('LocalStorage limit reached, saving lightweight templates:', err);
+      try {
+        const lightweight = next.map((t) => ({
+          ...t,
+          attachments: (t.attachments || []).map((a) => ({
+            id: a.id,
+            name: a.name,
+            type: a.type,
+            size: a.size,
+            dataUrl: a.dataUrl && a.dataUrl.length > 50000 ? '' : a.dataUrl
+          }))
+        }));
+        localStorage.setItem('zentry_custom_templates_v2', JSON.stringify(lightweight));
+      } catch (err2) {
+        console.error('Error saving templates to storage:', err2);
+      }
+    }
+  };
+
+  const handleApplyTemplate = (tpl: CustomCampaignTemplate) => {
+    setActiveTemplateId(tpl.id);
+    setInitialMessage(tpl.body);
+    if (tpl.attachments && tpl.attachments.length > 0) {
+      setCampaignAttachments(tpl.attachments);
+    }
+    showToast(`Plantilla "${tpl.title}" cargada`);
+  };
+
+  const handleSaveAsTemplate = () => {
+    const trimmedTitle = saveTemplateTitle.trim();
+    if (!trimmedTitle) {
+      alert('Por favor ingresa un título para la plantilla.');
+      return;
+    }
+    if (!initialMessage.trim()) {
+      alert('El mensaje de la plantilla no puede estar vacío.');
+      return;
+    }
+
+    const newTpl: CustomCampaignTemplate = {
+      id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: trimmedTitle,
+      body: initialMessage,
+      attachments: campaignAttachments.length > 0 ? [...campaignAttachments] : [],
+      createdAt: Date.now()
+    };
+
+    const nextTemplates = [...templates, newTpl];
+    persistTemplates(nextTemplates);
+    setActiveTemplateId(newTpl.id);
+    setIsSaveTemplateModalOpen(false);
+    setSaveTemplateTitle('');
+    showToast(`✅ Plantilla "${newTpl.title}" guardada con éxito`);
+  };
+
+  const handleStartEditTemplate = (tpl: CustomCampaignTemplate) => {
+    setEditingTemplate(tpl);
+    setEditTemplateTitle(tpl.title);
+    setEditTemplateBody(tpl.body);
+  };
+
+  const handleSaveEditedTemplate = () => {
+    if (!editingTemplate) return;
+    const trimmedTitle = editTemplateTitle.trim();
+    if (!trimmedTitle) {
+      alert('El título no puede estar vacío.');
+      return;
+    }
+
+    const updated = templates.map((t) => {
+      if (t.id === editingTemplate.id) {
+        return {
+          ...t,
+          title: trimmedTitle,
+          body: editTemplateBody
+        };
+      }
+      return t;
+    });
+
+    persistTemplates(updated);
+    setEditingTemplate(null);
+    showToast(`Plantilla "${trimmedTitle}" actualizada`);
+  };
+
+  const handleDeleteTemplate = (tpl: CustomCampaignTemplate) => {
+    if (window.confirm(`¿Estás seguro de eliminar la plantilla "${tpl.title}"?`)) {
+      const filtered = templates.filter((t) => t.id !== tpl.id);
+      persistTemplates(filtered);
+      if (activeTemplateId === tpl.id) {
+        setActiveTemplateId(null);
+      }
+      showToast(`Plantilla "${tpl.title}" eliminada`);
+    }
+  };
+
+  const handleAddManualLead = async (phone: string, name?: string, tab?: string, district?: string) => {
+    const cleanDigits = phone.replace(/\D/g, '');
+    if (cleanDigits.length < 8) {
+      alert('Ingresa un número telefónico válido de al menos 8 dígitos.');
+      return;
+    }
+
+    const norm = normalizePeruPhone(phone);
+    const finalPhone = norm.valid ? norm.formatted : phone.trim();
+    const finalName = name && name.trim() ? name.trim() : `Contacto ${cleanDigits.slice(-9)}`;
+    const finalTab = tab || (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab);
+    const finalDistrito = district && district.trim() ? district.trim() : 'Lima';
+    const newId = `lead-manual-${Date.now()}-${cleanDigits.slice(-4)}`;
+
+    const newLead: LeadData = {
+      id: newId,
+      nombreMadre: finalName,
+      celular: finalPhone,
+      sheetTab: finalTab,
+      distrito: finalDistrito,
+      rawEstado: 'Nuevo / Agregado Manual',
+      timestamp: Date.now()
+    };
+
+    // 1. Extra leads state & localStorage
+    const nextExtras = [newLead, ...extraLeads];
+    setExtraLeads(nextExtras);
+    try {
+      localStorage.setItem('zentry_manual_leads_v2', JSON.stringify(nextExtras));
+    } catch (e) {
+      console.warn('LocalStorage error saving manual leads:', e);
+    }
+
+    // 2. Automatically select this lead
+    setSelectedIds((prev) => new Set([...prev, newLead.id]));
+    setAudienceMode('manual');
+
+    // 3. Save to cloud Firestore CRM
+    try {
+      await saveCloudLead(newLead);
+    } catch (e) {
+      console.warn('Cloud save lead error:', e);
+    }
+
+    // 4. Update parent
+    if (onAddManualLead) {
+      onAddManualLead(newLead);
+    }
+
+    // 5. Clean up UI states
+    setIsManualNumberModalOpen(false);
+    setManualPhoneInput('');
+    setManualNameInput('');
+    setManualDistrictInput('');
+    setAudienceSearch('');
+
+    showToast(`Contacto ${finalName} (${finalPhone}) agregado a la campaña`);
+  };
+
   // Step 2: Message & Follow-ups State
   const [campaignName, setCampaignName] = useState<string>(
     `Campaña Zentry — ${initialSourceTab || 'Expo M'}`
   );
-  const [initialMessage, setInitialMessage] = useState<string>(MESSAGE_TEMPLATES[0].body);
+  const [initialMessage, setInitialMessage] = useState<string>(
+    templates[0]?.body || DEFAULT_MESSAGE_TEMPLATES[0].body
+  );
   const [followUps, setFollowUps] = useState<FollowUpStep[]>([
     {
       id: 'fu-1',
@@ -353,11 +645,16 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   }, []);
 
   // Sync audience selection when switching origin tab in 'tab' mode
-  const getLeadTab = (l: LeadData) => (l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)');
+  const getLeadTab = (l: LeadData) => {
+    if (l.id?.startsWith('rec-') || (l as any).tipoLead === 'rec') {
+      return 'Reclutamiento (RP)';
+    }
+    return l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)';
+  };
 
   useEffect(() => {
     if (audienceMode === 'tab') {
-      const matching = leads.filter((l) =>
+      const matching = allLeads.filter((l) =>
         selectedOriginTab === '__ALL__' ? true : getLeadTab(l) === selectedOriginTab
       );
       setSelectedIds(new Set(matching.map((l) => l.id)));
@@ -368,12 +665,15 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         audTableRef.current.scrollTop = 0;
       }
     }
-  }, [audienceMode, selectedOriginTab, leads]);
+  }, [audienceMode, selectedOriginTab, allLeads]);
 
-  // Filtered and sorted leads for Step 1 table (selected & group leads appear at the very top!)
+  // Filtered and sorted leads for Step 1 table (strictly respects selected bottom tab filter!)
   const visibleAudienceLeads = useMemo(() => {
     const q = audienceSearch.trim().toLowerCase();
-    const filtered = leads.filter((l) => {
+    const filtered = allLeads.filter((l) => {
+      if (selectedOriginTab !== '__ALL__' && getLeadTab(l) !== selectedOriginTab) {
+        return false;
+      }
       if (!q) return true;
       return (
         (l.nombreMadre || '').toLowerCase().includes(q) ||
@@ -386,16 +686,13 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
       const aSel = selectedIds.has(a.id) ? 1 : 0;
       const bSel = selectedIds.has(b.id) ? 1 : 0;
       if (aSel !== bSel) return bSel - aSel;
-      const aTab = selectedOriginTab !== '__ALL__' && getLeadTab(a) === selectedOriginTab ? 1 : 0;
-      const bTab = selectedOriginTab !== '__ALL__' && getLeadTab(b) === selectedOriginTab ? 1 : 0;
-      if (aTab !== bTab) return bTab - aTab;
       return 0;
     });
-  }, [leads, selectedIds, selectedOriginTab, audienceSearch]);
+  }, [allLeads, selectedIds, selectedOriginTab, audienceSearch]);
 
   const selectedLeadsList = useMemo(() => {
-    return leads.filter((l) => selectedIds.has(l.id));
-  }, [leads, selectedIds]);
+    return allLeads.filter((l) => selectedIds.has(l.id));
+  }, [allLeads, selectedIds]);
 
   const validSelectedLeads = useMemo(() => {
     return selectedLeadsList.filter((l) => normalizePeruPhone(l.celular).valid);
@@ -408,7 +705,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
       return validSelectedLeads[previewLeadIndex % validSelectedLeads.length];
     }
     return (
-      leads[0] || {
+      allLeads[0] || {
         id: 'demo-1',
         nombreMadre: 'Cindy Huarcaya Castañeda',
         celular: '984549686',
@@ -424,7 +721,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         observaciones: ''
       }
     );
-  }, [validSelectedLeads, previewLeadIndex, leads]);
+  }, [validSelectedLeads, previewLeadIndex, allLeads]);
 
   // Follow-up handlers
   const handleAddFollowUp = () => {
@@ -722,14 +1019,16 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         borderRadius: isStandalone ? '0' : '16px',
         width: '100%',
         maxWidth: isStandalone ? '100%' : '1060px',
-        minHeight: isStandalone ? '100vh' : 'auto',
-        maxHeight: isStandalone ? 'none' : '92vh',
+        height: isStandalone ? '100%' : 'auto',
+        minHeight: isStandalone ? '0' : 'auto',
+        maxHeight: isStandalone ? '100%' : '92vh',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: isStandalone ? 'none' : '0 24px 60px rgba(15, 23, 42, 0.25)',
         border: isStandalone ? 'none' : '1px solid #E2E8F0',
         overflow: 'hidden',
-        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+        flex: isStandalone ? 1 : undefined
       }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -941,10 +1240,10 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
 
         {/* ==================== SECTION 1: WIZARD 4 PASOS ==================== */}
         {activeSection === 'wizard' && (
-          <>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             {/* PASO 1: AUDIENCE */}
             {wizardStep === 1 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minHeight: 0 }}>
                 <div
                   style={{
                     background: '#FFFFFF',
@@ -953,13 +1252,102 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                     border: '1px solid #E2E8F0',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '12px'
+                    gap: '12px',
+                    flex: 1,
+                    minHeight: 0
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <h4 style={{ margin: 0, fontSize: '0.92rem', color: '#0F172A', fontWeight: 800 }}>
-                      Audiencia
-                    </h4>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <h4 style={{ margin: 0, fontSize: '0.92rem', color: '#0F172A', fontWeight: 800 }}>
+                        Audiencia
+                      </h4>
+                      {/* Pestañas interactivas de origen sincronizadas con la barra inferior */}
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                        {sheetTabs.map((t) => {
+                          const isSel = selectedOriginTab === t;
+                          const count = allLeads.filter((l) => getLeadTab(l) === t).length;
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => {
+                                setSelectedOriginTab(t);
+                                setAudienceMode('tab');
+                                onSelectTab?.(t);
+                              }}
+                              style={{
+                                border: isSel ? '1.5px solid #10B981' : '1px solid #CBD5E1',
+                                background: isSel ? '#ECFDF5' : '#F8FAFC',
+                                color: isSel ? '#065F46' : '#475569',
+                                fontWeight: isSel ? 800 : 600,
+                                fontSize: '0.73rem',
+                                padding: '2px 7px',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                boxShadow: isSel ? '0 1px 3px rgba(16,185,129,0.15)' : 'none',
+                                transition: 'all 0.12s ease'
+                              }}
+                              title={`Filtrar por ${t} (${count} contactos)`}
+                            >
+                              <span>{t}</span>
+                              <span
+                                style={{
+                                  background: isSel ? '#10B981' : '#E2E8F0',
+                                  color: isSel ? '#FFFFFF' : '#475569',
+                                  fontSize: '0.64rem',
+                                  fontWeight: 800,
+                                  padding: '1px 5px',
+                                  borderRadius: '8px'
+                                }}
+                              >
+                                {count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedOriginTab('__ALL__');
+                            setAudienceMode('tab');
+                            onSelectTab?.('__ALL__');
+                          }}
+                          style={{
+                            border: selectedOriginTab === '__ALL__' ? '1.5px solid #2563EB' : '1px solid #CBD5E1',
+                            background: selectedOriginTab === '__ALL__' ? '#EFF6FF' : '#F8FAFC',
+                            color: selectedOriginTab === '__ALL__' ? '#1E40AF' : '#475569',
+                            fontWeight: selectedOriginTab === '__ALL__' ? 800 : 600,
+                            fontSize: '0.73rem',
+                            padding: '2px 7px',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: selectedOriginTab === '__ALL__' ? '0 1px 3px rgba(37,99,235,0.15)' : 'none'
+                          }}
+                          title={`Ver toda la base (${allLeads.length} contactos)`}
+                        >
+                          <span>Ver Todo</span>
+                          <span
+                            style={{
+                              background: selectedOriginTab === '__ALL__' ? '#2563EB' : '#E2E8F0',
+                              color: selectedOriginTab === '__ALL__' ? '#FFFFFF' : '#475569',
+                              fontSize: '0.64rem',
+                              fontWeight: 800,
+                              padding: '1px 5px',
+                              borderRadius: '8px'
+                            }}
+                          >
+                            {allLeads.length}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Audience Stats Pills */}
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -994,64 +1382,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Origin / SheetTab Selector Chips */}
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {sheetTabs.map((tab) => {
-                      const count = leads.filter((l) => getLeadTab(l) === tab).length;
-                      const isSelected = selectedOriginTab === tab;
-                      return (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => {
-                            setSelectedOriginTab(tab);
-                            setAudienceMode('tab');
-                          }}
-                          style={{
-                            padding: '6px 12px',
-                            borderRadius: '8px',
-                            border: isSelected ? '1.5px solid #533B87' : '1px solid #CBD5E1',
-                            background: isSelected ? '#533B87' : '#F8FAFC',
-                            color: isSelected ? '#FFFFFF' : '#334155',
-                            fontSize: '0.76rem',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px'
-                          }}
-                        >
-                          <SvgIcon.Tag />
-                          <span>{tab} • {count}</span>
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedOriginTab('__ALL__');
-                        setAudienceMode('tab');
-                      }}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        border: selectedOriginTab === '__ALL__' ? '1.5px solid #2563EB' : '1px solid #CBD5E1',
-                        background: selectedOriginTab === '__ALL__' ? '#2563EB' : '#F8FAFC',
-                        color: selectedOriginTab === '__ALL__' ? '#FFFFFF' : '#334155',
-                        fontSize: '0.76rem',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px'
-                      }}
-                    >
-                      <SvgIcon.Globe />
-                      <span>Todas • {leads.length}</span>
-                    </button>
-                  </div>
-
-                  {/* Search, Expand & Manual Checkbox Controls */}
+                  {/* Search & Manual Checkbox Controls */}
                   <div
                     style={{
                       display: 'flex',
@@ -1153,35 +1484,102 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setAudienceExpanded((prev) => !prev)}
+                      onClick={() => {
+                        const digits = audienceSearch.replace(/\D/g, '');
+                        setManualPhoneInput(digits || audienceSearch.trim());
+                        setManualNameInput('');
+                        setManualDistrictInput('');
+                        setManualTabInput(selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab);
+                        setIsManualNumberModalOpen(true);
+                      }}
                       style={{
-                        padding: '7px 10px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '7px 12px',
                         borderRadius: '8px',
-                        border: '1.5px solid #533B87',
-                        background: audienceExpanded ? '#533B87' : '#F5F3FF',
-                        color: audienceExpanded ? '#FFFFFF' : '#533B87',
+                        border: '1.5px solid #059669',
+                        background: '#ECFDF5',
                         fontSize: '0.74rem',
                         fontWeight: 800,
                         cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px'
+                        color: '#065F46'
                       }}
                     >
-                      <SvgIcon.Maximize />
-                      <span>{audienceExpanded ? 'Contraer' : 'Expandir'}</span>
+                      <SvgIcon.UserPlus />
+                      <span>+ Número directo</span>
                     </button>
                   </div>
 
-                  {/* Contact Checkbox Table */}
+                  {/* Smart Prompt when search is empty or number not found */}
+                  {visibleAudienceLeads.length === 0 && (
+                    <div
+                      style={{
+                        padding: '12px 16px',
+                        borderRadius: '10px',
+                        background: '#F0F9FF',
+                        border: '1.5px solid #BAE6FD',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '1.3rem' }}>📱</span>
+                        <div>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0369A1' }}>
+                            {audienceSearch.trim()
+                              ? `El número o búsqueda "${audienceSearch.trim()}" no está en esta lista de leads`
+                              : 'No hay leads para el filtro seleccionado'}
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: '#0284C7' }}>
+                            Puedes agregar este número directamente para que reciba la campaña y sus seguimientos programados.
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const digits = audienceSearch.replace(/\D/g, '');
+                          setManualPhoneInput(digits || audienceSearch.trim());
+                          setManualNameInput('');
+                          setManualDistrictInput('');
+                          setManualTabInput(selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab);
+                          setIsManualNumberModalOpen(true);
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '7px 14px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: '#0284C7',
+                          color: '#FFFFFF',
+                          fontSize: '0.78rem',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 4px rgba(2,132,199,0.25)'
+                        }}
+                      >
+                        <SvgIcon.UserPlus />
+                        <span>+ Agregar "{audienceSearch.trim() || 'Número'}" al flujo</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Contact Checkbox Table (Fills complete vertical height) */}
                   <div
                     ref={audTableRef}
                     style={{
-                      maxHeight: audienceExpanded ? '560px' : '320px',
+                      flex: 1,
+                      minHeight: isStandalone ? 'calc(100vh - 420px)' : '340px',
+                      maxHeight: isStandalone ? 'calc(100vh - 380px)' : '520px',
                       overflowY: 'auto',
                       border: '1px solid #E2E8F0',
-                      borderRadius: '8px',
-                      transition: 'max-height 0.25s ease'
+                      borderRadius: '8px'
                     }}
                   >
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
@@ -1227,6 +1625,22 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                               </td>
                               <td style={{ padding: '7px 10px', fontWeight: 700, color: '#0F172A' }}>
                                 {lead.nombreMadre}
+                                {lead.id.startsWith('lead-manual-') && (
+                                  <span
+                                    style={{
+                                      marginLeft: '6px',
+                                      fontSize: '0.62rem',
+                                      background: '#FEF3C7',
+                                      color: '#92400E',
+                                      border: '1px solid #FCD34D',
+                                      padding: '1px 5px',
+                                      borderRadius: '4px',
+                                      fontWeight: 800
+                                    }}
+                                  >
+                                    Directo
+                                  </span>
+                                )}
                                 {isChecked && (
                                   <span
                                     style={{
@@ -1345,31 +1759,135 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                     />
                   </div>
 
-                  {/* Quick Templates */}
+                  {/* Quick Templates with CRUD */}
                   <div>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '5px' }}>
-                      Plantillas
-                    </span>
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {MESSAGE_TEMPLATES.map((tpl) => (
-                        <button
-                          key={tpl.title}
-                          type="button"
-                          onClick={() => setInitialMessage(tpl.body)}
-                          style={{
-                            padding: '4px 9px',
-                            borderRadius: '6px',
-                            border: '1px solid #DDD6FE',
-                            background: '#F5F3FF',
-                            color: '#533B87',
-                            fontSize: '0.7rem',
-                            fontWeight: 700,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {tpl.title}
-                        </button>
-                      ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#475569', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>📋 Plantillas Disponibles ({templates.length})</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInitialMessage('');
+                          setCampaignAttachments([]);
+                          setActiveTemplateId(null);
+                          showToast('Editor reiniciado en blanco');
+                        }}
+                        style={{
+                          fontSize: '0.68rem',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#6366F1',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          padding: '2px 4px'
+                        }}
+                      >
+                        + Mensaje en blanco
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      {templates.map((tpl) => {
+                        const isActive = activeTemplateId === tpl.id;
+                        const hasAttachments = Boolean(tpl.attachments && tpl.attachments.length > 0);
+                        return (
+                          <div
+                            key={tpl.id}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              borderRadius: '8px',
+                              border: isActive ? '1.5px solid #6366F1' : '1px solid #E2E8F0',
+                              background: isActive ? '#EEF2FF' : '#F8FAFC',
+                              padding: '2px 4px 2px 8px',
+                              gap: '4px',
+                              boxShadow: isActive ? '0 1px 3px rgba(99,102,241,0.15)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleApplyTemplate(tpl)}
+                              title="Haz clic para cargar mensaje y sus archivos adjuntos"
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: isActive ? '#4338CA' : '#1E293B',
+                                fontSize: '0.72rem',
+                                fontWeight: isActive ? 800 : 600,
+                                cursor: 'pointer',
+                                padding: '2px 0',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <span>{tpl.title}</span>
+                              {hasAttachments && (
+                                <span
+                                  title={`${tpl.attachments?.length} archivo(s) adjunto(s)`}
+                                  style={{
+                                    fontSize: '0.62rem',
+                                    background: isActive ? '#4338CA' : '#E2E8F0',
+                                    color: isActive ? '#FFFFFF' : '#475569',
+                                    padding: '1px 5px',
+                                    borderRadius: '6px',
+                                    fontWeight: 800
+                                  }}
+                                >
+                                  📎 {tpl.attachments?.length}
+                                </span>
+                              )}
+                            </button>
+
+                            {/* Edit Template Title / Content */}
+                            <button
+                              type="button"
+                              title="Editar o renombrar plantilla"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartEditTemplate(tpl);
+                              }}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: '#64748B',
+                                cursor: 'pointer',
+                                padding: '3px',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center'
+                              }}
+                            >
+                              <SvgIcon.Edit3 />
+                            </button>
+
+                            {/* Delete Template */}
+                            <button
+                              type="button"
+                              title="Eliminar plantilla"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTemplate(tpl);
+                              }}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: '#94A3B8',
+                                cursor: 'pointer',
+                                padding: '2px 4px',
+                                borderRadius: '4px',
+                                fontSize: '0.72rem',
+                                fontWeight: 800
+                              }}
+                              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#DC2626')}
+                              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = '#94A3B8')}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1505,6 +2023,82 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                             </div>
                           ))}
                         </div>
+                      )}
+                    </div>
+
+                    {/* Guardar como Plantilla Button & Update Active */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!initialMessage.trim()) {
+                            alert('Escribe un mensaje antes de guardarlo como plantilla.');
+                            return;
+                          }
+                          setSaveTemplateTitle('');
+                          setIsSaveTemplateModalOpen(true);
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #6366F1',
+                          background: '#EEF2FF',
+                          color: '#4338CA',
+                          fontSize: '0.74rem',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          transition: 'background 0.15s ease'
+                        }}
+                      >
+                        <SvgIcon.Save />
+                        <span>Guardar como plantilla</span>
+                        {campaignAttachments.length > 0 && (
+                          <span
+                            style={{
+                              background: '#4338CA',
+                              color: '#FFFFFF',
+                              padding: '1px 6px',
+                              borderRadius: '8px',
+                              fontSize: '0.64rem',
+                              fontWeight: 800
+                            }}
+                          >
+                            +{campaignAttachments.length} {campaignAttachments.length === 1 ? 'adjunto' : 'adjuntos'}
+                          </span>
+                        )}
+                      </button>
+
+                      {activeTemplateId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = templates.find((t) => t.id === activeTemplateId);
+                            if (!target) return;
+                            const updated = templates.map((t) =>
+                              t.id === activeTemplateId
+                                ? { ...t, body: initialMessage, attachments: campaignAttachments }
+                                : t
+                            );
+                            persistTemplates(updated);
+                            showToast(`Plantilla "${target.title}" actualizada con los cambios actuales`);
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#4F46E5',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <span>↻ Actualizar plantilla seleccionada</span>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -2299,7 +2893,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* ==================== SECTION 2: OUTBOX QUEUE & CAMPAIGNS ==================== */}
@@ -2974,6 +3568,478 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Modal: Guardar como Plantilla */}
+        {isSaveTemplateModalOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(3px)',
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px'
+            }}
+            onClick={() => setIsSaveTemplateModalOpen(false)}
+          >
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '480px',
+                padding: '20px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ background: '#EEF2FF', padding: '6px', borderRadius: '8px', color: '#4F46E5', display: 'flex' }}>
+                    <SvgIcon.Save />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>
+                      Guardar como Plantilla
+                    </h3>
+                    <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748B' }}>
+                      Reutiliza este mensaje y sus archivos en futuras campañas
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSaveTemplateModalOpen(false)}
+                  style={{ border: 'none', background: 'transparent', fontSize: '1rem', color: '#94A3B8', cursor: 'pointer', fontWeight: 900 }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Nombre de la Plantilla *
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={saveTemplateTitle}
+                  onChange={(e) => setSaveTemplateTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveAsTemplate();
+                  }}
+                  placeholder="Ej: Demo con Catálogo en PDF..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.82rem',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ background: '#F8FAFC', borderRadius: '8px', padding: '10px 12px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>
+                  Resumen de la plantilla a guardar:
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#1E293B', fontStyle: 'italic', maxHeight: '60px', overflowY: 'auto' }}>
+                  "{initialMessage.length > 130 ? `${initialMessage.slice(0, 130)}...` : initialMessage}"
+                </div>
+                {campaignAttachments.length > 0 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: '6px', border: '1px solid #A7F3D0' }}>
+                      📎 {campaignAttachments.length} {campaignAttachments.length === 1 ? 'archivo adjunto incluido' : 'archivos adjuntos incluidos'}
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
+                    Sin archivos adjuntos
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsSaveTemplateModalOpen(false)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    color: '#64748B',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAsTemplate}
+                  disabled={!saveTemplateTitle.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: saveTemplateTitle.trim() ? '#4F46E5' : '#CBD5E1',
+                    color: '#FFFFFF',
+                    fontSize: '0.78rem',
+                    fontWeight: 800,
+                    cursor: saveTemplateTitle.trim() ? 'pointer' : 'not-allowed',
+                    boxShadow: saveTemplateTitle.trim() ? '0 2px 4px rgba(79,70,229,0.3)' : 'none'
+                  }}
+                >
+                  Guardar Plantilla
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Editar Plantilla */}
+        {editingTemplate && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(3px)',
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px'
+            }}
+            onClick={() => setEditingTemplate(null)}
+          >
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '480px',
+                padding: '20px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ background: '#F5F3FF', padding: '6px', borderRadius: '8px', color: '#533B87', display: 'flex' }}>
+                    <SvgIcon.Edit3 />
+                  </div>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>
+                    Editar Plantilla
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingTemplate(null)}
+                  style={{ border: 'none', background: 'transparent', fontSize: '1rem', color: '#94A3B8', cursor: 'pointer', fontWeight: 900 }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Nombre de la Plantilla
+                </label>
+                <input
+                  type="text"
+                  value={editTemplateTitle}
+                  onChange={(e) => setEditTemplateTitle(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.82rem',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Mensaje
+                </label>
+                <textarea
+                  value={editTemplateBody}
+                  onChange={(e) => setEditTemplateBody(e.target.value)}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.8rem',
+                    boxSizing: 'border-box',
+                    fontFamily: 'inherit',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingTemplate(null)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    color: '#64748B',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditedTemplate}
+                  disabled={!editTemplateTitle.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: '#533B87',
+                    color: '#FFFFFF',
+                    fontSize: '0.78rem',
+                    fontWeight: 800,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Guardar Cambios
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Agregar Número Directo */}
+        {isManualNumberModalOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(3px)',
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px'
+            }}
+            onClick={() => setIsManualNumberModalOpen(false)}
+          >
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '460px',
+                padding: '22px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '14px'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ background: '#ECFDF5', padding: '6px', borderRadius: '8px', color: '#059669', display: 'flex' }}>
+                    <SvgIcon.UserPlus />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.96rem', fontWeight: 800, color: '#0F172A' }}>
+                      Agregar Número Directo a la Campaña
+                    </h3>
+                    <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748B' }}>
+                      Participará en el envío masivo y los seguimientos automáticos
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsManualNumberModalOpen(false)}
+                  style={{ border: 'none', background: 'transparent', fontSize: '1rem', color: '#94A3B8', cursor: 'pointer', fontWeight: 900 }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Teléfono / WhatsApp *
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={manualPhoneInput}
+                  onChange={(e) => setManualPhoneInput(e.target.value)}
+                  placeholder="Ej: 942 575 425 o +51 942575425"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.84rem',
+                    fontFamily: 'monospace',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Nombre del Contacto (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={manualNameInput}
+                  onChange={(e) => setManualNameInput(e.target.value)}
+                  placeholder="Ej: José Silva"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '0.82rem',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                    Origen / Pestaña
+                  </label>
+                  <select
+                    value={manualTabInput || (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab)}
+                    onChange={(e) => setManualTabInput(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '7px 10px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #CBD5E1',
+                      fontSize: '0.78rem',
+                      boxSizing: 'border-box',
+                      background: '#FFFFFF'
+                    }}
+                  >
+                    {sheetTabs.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                    <option value="Directo / Manual">Directo / Manual</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.74rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                    Distrito (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={manualDistrictInput}
+                    onChange={(e) => setManualDistrictInput(e.target.value)}
+                    placeholder="Ej: Santiago de Surco"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #CBD5E1',
+                      fontSize: '0.82rem',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsManualNumberModalOpen(false)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    color: '#64748B',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddManualLead(manualPhoneInput, manualNameInput, manualTabInput, manualDistrictInput)}
+                  disabled={!manualPhoneInput.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: manualPhoneInput.trim() ? '#059669' : '#CBD5E1',
+                    color: '#FFFFFF',
+                    fontSize: '0.78rem',
+                    fontWeight: 800,
+                    cursor: manualPhoneInput.trim() ? 'pointer' : 'not-allowed',
+                    boxShadow: manualPhoneInput.trim() ? '0 2px 4px rgba(5,150,105,0.3)' : 'none'
+                  }}
+                >
+                  + Agregar y Seleccionar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Notification Toast */}
+        {toastMessage && (
+          <div
+            style={{
+              position: 'fixed',
+              bottom: '24px',
+              right: '24px',
+              background: '#0F172A',
+              color: '#FFFFFF',
+              padding: '10px 18px',
+              borderRadius: '10px',
+              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              zIndex: 10001
+            }}
+          >
+            <span style={{ color: '#10B981', display: 'flex' }}>
+              <SvgIcon.Check />
+            </span>
+            <span>{toastMessage}</span>
           </div>
         )}
       </div>

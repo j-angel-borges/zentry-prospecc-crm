@@ -1240,7 +1240,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
             type: 'ZENTRY_CRM_LEADS_SYNC',
             leads: resolvedLeads,
             activeTab,
-            sheetTabs
+            sheetTabs: allTabsWithLeads
           },
           '*'
         );
@@ -1336,10 +1336,37 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
   };
 
   // Resolver a qué pestaña pertenece el lead (por defecto Expo M (JA))
+  // Las fuentes de reclutamiento (prefijo rec- o tipoLead === 'rec') se consolidan bajo 'Reclutamiento (RP)'
   const getLeadSheetTab = (lead: LeadData): string => {
+    if (lead.id?.startsWith('rec-') || (lead as any).tipoLead === 'rec') {
+      return 'Reclutamiento (RP)';
+    }
     const tab = getLeadField(lead, 'sheetTab');
     return tab && tab.trim() !== '' ? tab : 'Expo M (JA)';
   };
+
+  // Prospectos efectivos combinando datos de nube/estáticos con ediciones locales y asignación de pestañas
+  const effectiveLeads = React.useMemo(() => {
+    return leads.map((l) => {
+      const edit = localEdits[l.id];
+      const merged = edit ? { ...l, ...edit } : l;
+      return {
+        ...merged,
+        sheetTab: getLeadSheetTab(merged)
+      };
+    });
+  }, [leads, localEdits]);
+
+  // Pestañas dinámicas garantizadas: incluye siempre las pestañas base, pestañas de nube y cualquier pestaña activa en los prospectos
+  const allTabsWithLeads = React.useMemo(() => {
+    const set = new Set([...sheetTabs]);
+    DEFAULT_SHEET_TABS.forEach((t) => set.add(t));
+    leads.forEach((l) => {
+      const t = getLeadSheetTab(l);
+      if (t && t.trim() !== '') set.add(t);
+    });
+    return Array.from(set);
+  }, [sheetTabs, leads, localEdits]);
 
   const getLeadHistory = (lead: LeadData): CallLogEntry[] => {
     const edit = localEdits[lead.id];
@@ -2248,7 +2275,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                               }}
                               title="Traspasar este lead a otra pestaña"
                             >
-                              {sheetTabs.map(t => (
+                              {allTabsWithLeads.map(t => (
                                 <option key={t} value={t}>{t}</option>
                               ))}
                             </select>
@@ -2679,10 +2706,12 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
       {viewMode === 'campaigns' && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 125px)', background: '#FFFFFF', borderRadius: '12px 12px 0 0', overflow: 'hidden', border: '1px solid #E2E8F0', borderBottom: 'none' }}>
           <TickToolModal
-            leads={leads}
-            sheetTabs={sheetTabs}
+            leads={effectiveLeads}
+            sheetTabs={allTabsWithLeads}
             preselectedLeadIds={selectedLeadIds}
             initialSourceTab={activeTab === '__ALL__' ? 'Expo M (JA)' : activeTab}
+            activeSourceTab={activeTab}
+            onSelectTab={handleSelectTab}
             isStandalone={true}
             onClose={() => setViewMode('spreadsheet')}
           />
@@ -2707,7 +2736,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
       >
         {/* Pestañas a la izquierda */}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', overflowX: 'auto', flex: 1, paddingBottom: '0' }}>
-          {sheetTabs.map((tab) => {
+          {allTabsWithLeads.map((tab) => {
             const isActive = activeTab === tab;
             const count = getTabCount(tab);
             const isCustom = !DEFAULT_SHEET_TABS.includes(tab);
