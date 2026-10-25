@@ -444,6 +444,34 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<any>(null);
 
+  // Live WhatsApp Extension & Dispatcher State
+  const [extInstalled, setExtInstalled] = useState<boolean>(false);
+  const [extState, setExtState] = useState<{
+    isPaused?: boolean;
+    waConnected?: boolean;
+    dailyDispatchedCount?: number;
+    dailyLimit?: number;
+    dailyDateKey?: string;
+    nextDispatchAt?: string | null;
+    lastDispatchedPhone?: string | null;
+    lastDispatchedAt?: string | null;
+  } | null>(null);
+
+  const handleResetDailyCount = () => {
+    window.postMessage({ type: 'ZENTRY_TICKTOOL_RESET_DAILY_COUNT' }, '*');
+    showToast('Contador diario de envíos reiniciado a 0');
+  };
+
+  const handleSetDailyLimit = (limit: number) => {
+    window.postMessage({ type: 'ZENTRY_TICKTOOL_SET_DAILY_LIMIT', limit }, '*');
+    showToast(`Límite diario establecido en ${limit} mensajes`);
+  };
+
+  const handleDispatchNextNow = () => {
+    window.postMessage({ type: 'ZENTRY_TICKTOOL_DISPATCH_NOW' }, '*');
+    showToast('Despacho activado en WhatsApp Web');
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -764,19 +792,60 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     showToast('Borrador descartado');
   };
 
-  // Listen for CRM selection events from parent/iframe postMessage
+  // Listen for CRM selection events & Extension PONG / STATUS_UPDATED from postMessage
   useEffect(() => {
     const handleMsg = (e: MessageEvent) => {
-      if (e.data && e.data.type === 'ZENTRY_CRM_SELECTION' && Array.isArray(e.data.leadIds)) {
+      if (!e.data || typeof e.data !== 'object') return;
+      if (e.data.type === 'ZENTRY_CRM_SELECTION' && Array.isArray(e.data.leadIds)) {
         if (e.data.leadIds.length > 0) {
           setAudienceMode('manual');
           setSelectedIds(new Set(e.data.leadIds));
         }
+      } else if (e.data.type === 'ZENTRY_TICKTOOL_PONG' || e.data.type === 'Vitality_TICKTOOL_PONG') {
+        setExtInstalled(Boolean(e.data.extensionInstalled));
+        if (e.data.state) {
+          setExtState(e.data.state);
+        }
+      } else if (e.data.type === 'ZENTRY_TICKTOOL_STATUS_UPDATED' || e.data.type === 'Vitality_TICKTOOL_STATUS_UPDATED') {
+        if (e.data.state) {
+          setExtState(e.data.state);
+        }
       }
     };
     window.addEventListener('message', handleMsg);
-    return () => window.removeEventListener('message', handleMsg);
+
+    // Ping extension immediately and poll every 4s to track live status
+    window.postMessage({ type: 'ZENTRY_TICKTOOL_PING' }, '*');
+    const interval = setInterval(() => {
+      window.postMessage({ type: 'ZENTRY_TICKTOOL_PING' }, '*');
+    }, 4000);
+
+    return () => {
+      window.removeEventListener('message', handleMsg);
+      clearInterval(interval);
+    };
   }, []);
+
+  // Respaldo de Despacho Proactivo: Si hay mensajes 'pending' cuya hora programada ya llego,
+  // y la extension esta activa, avisar para despachar y evitar que queden en espera.
+  useEffect(() => {
+    const tickInterval = setInterval(() => {
+      const now = Date.now();
+      const hasOverduePending = outbox.some((item) => {
+        if (item.status !== 'pending') return false;
+        const schedMs = typeof item.scheduledFor === 'number'
+          ? item.scheduledFor
+          : Date.parse(String(item.scheduledFor || ''));
+        return !Number.isNaN(schedMs) && schedMs <= now;
+      });
+
+      if (hasOverduePending && extInstalled && !extState?.isPaused) {
+        window.postMessage({ type: 'ZENTRY_TICKTOOL_DISPATCH_NOW' }, '*');
+      }
+    }, 8000);
+
+    return () => clearInterval(tickInterval);
+  }, [outbox, extInstalled, extState?.isPaused]);
 
   // Sync audience selection when switching origin tab in 'tab' mode
   const getLeadTab = (l: LeadData) => (l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)');
@@ -1019,6 +1088,15 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         {
           type: 'ZENTRY_TICKTOOL_PUSH_QUEUE',
           items: result.outboxItems,
+          campaignId: result.campaign.id,
+          campaignName: finalCampaignName,
+          operatorId: currentOperatorId,
+          payload: {
+            items: result.outboxItems,
+            campaignId: result.campaign.id,
+            campaignName: finalCampaignName,
+            operatorId: currentOperatorId
+          },
           dispatchImmediately: timingMode === 'now'
         },
         '*'
@@ -3157,6 +3235,166 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         {/* ==================== SECTION 2: OUTBOX QUEUE & CAMPAIGNS ==================== */}
         {activeSection === 'queue' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* WhatsApp Extension & Daily Limit Banner */}
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '12px',
+                border: '1px solid #E2E8F0',
+                padding: '12px 16px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div
+                  style={{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '50%',
+                    background: extState?.waConnected ? '#10B981' : '#F59E0B',
+                    boxShadow: extState?.waConnected ? '0 0 8px #10B981' : 'none'
+                  }}
+                />
+                <div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>Extensión WhatsApp:</span>
+                    <span style={{ color: extInstalled ? (extState?.waConnected ? '#059669' : '#D97706') : '#DC2626' }}>
+                      {extInstalled ? (extState?.waConnected ? 'Conectado a WhatsApp Web' : 'Esperando pestaña de WhatsApp') : 'No detectada'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
+                    Envíos hoy: <strong>{extState?.dailyDispatchedCount ?? 0}</strong> / {extState?.dailyLimit ?? 100} mensajes
+                    {extState?.nextDispatchAt && (
+                      <span style={{ marginLeft: '8px', color: '#533B87', fontWeight: 600 }}>
+                        • Próximo despacho: {new Date(extState.nextDispatchAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleDispatchNextNow}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    background: '#533B87',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '6px 12px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <SvgIcon.Send /> Despachar Siguiente
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetDailyCount}
+                  style={{
+                    background: '#F1F5F9',
+                    color: '#334155',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: '8px',
+                    padding: '6px 10px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                  title="Reinicia el conteo de mensajes enviados hoy a 0"
+                >
+                  Reiniciar Contador Hoy
+                </button>
+                <select
+                  value={extState?.dailyLimit ?? 100}
+                  onChange={(e) => handleSetDailyLimit(Number(e.target.value))}
+                  style={{
+                    background: '#F8FAFC',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: '8px',
+                    padding: '6px 8px',
+                    fontSize: '0.75rem',
+                    color: '#334155',
+                    cursor: 'pointer'
+                  }}
+                  title="Configurar límite de mensajes diarios"
+                >
+                  <option value={35}>Límite: 35 / día</option>
+                  <option value={50}>Límite: 50 / día</option>
+                  <option value={100}>Límite: 100 / día</option>
+                  <option value={200}>Límite: 200 / día</option>
+                  <option value={500}>Límite: 500 / día</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Daily Limit Warning Banner */}
+            {extState && extState.dailyDispatchedCount !== undefined && extState.dailyLimit !== undefined && extState.dailyDispatchedCount >= extState.dailyLimit && (
+              <div
+                style={{
+                  background: '#FFFBEB',
+                  border: '1.5px solid #F59E0B',
+                  borderRadius: '10px',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+                  <div style={{ fontSize: '0.78rem', color: '#92400E', lineHeight: '1.3' }}>
+                    <strong>Límite diario alcanzado ({extState.dailyDispatchedCount}/{extState.dailyLimit}):</strong> Los envíos automáticos masivos se han pausado preventivamente. Los contactos directos y pruebas manuales seguirán despachándose normalmente.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={handleResetDailyCount}
+                    style={{
+                      background: '#D97706',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 10px',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Reiniciar a 0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetDailyLimit(Math.max((extState.dailyDispatchedCount || 35) + 50, 100))}
+                    style={{
+                      background: '#FFFFFF',
+                      color: '#B45309',
+                      border: '1px solid #D97706',
+                      borderRadius: '6px',
+                      padding: '5px 10px',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    +50 Envíos
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Status Summary Bar */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
               {[
