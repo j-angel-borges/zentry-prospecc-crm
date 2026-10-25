@@ -308,7 +308,16 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   const [extraLeads, setExtraLeads] = useState<LeadData[]>(() => {
     try {
       const raw = localStorage.getItem('zentry_manual_leads_v2');
-      return raw ? JSON.parse(raw) : [];
+      const parsed = raw ? JSON.parse(raw) : [];
+      const validOnly = Array.isArray(parsed)
+        ? parsed.filter((l: LeadData) => Boolean(l.celular && l.celular.trim().length >= 8))
+        : [];
+      if (validOnly.length !== parsed.length) {
+        try {
+          localStorage.setItem('zentry_manual_leads_v2', JSON.stringify(validOnly));
+        } catch (_) {}
+      }
+      return validOnly;
     } catch {
       return [];
     }
@@ -538,7 +547,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     }
 
     const norm = normalizePeruPhone(phone);
-    const finalPhone = (norm.valid ? norm.formatted : phone.trim()) || '';
+    const finalPhone = norm.valid ? norm.digits : (cleanDigits.length >= 9 ? cleanDigits.slice(-9) : cleanDigits);
     const finalName = name && name.trim() ? name.trim() : `Contacto ${cleanDigits.slice(-9)}`;
     // Asignar el prospecto directo a la pestaña activa para garantizar que aparezca visible de inmediato
     const finalTab = (tab && tab !== 'Directo / Manual')
