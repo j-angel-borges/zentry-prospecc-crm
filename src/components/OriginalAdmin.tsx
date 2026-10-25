@@ -12,6 +12,18 @@ import {
   deleteCloudLead
 } from '../services/cloudCrm';
 import { TickToolModal } from './TickToolModal';
+import { ZentryCalendarView } from './ZentryCalendarView';
+import {
+  loginWithGoogle,
+  logoutUser,
+  getStoredAccessToken,
+  getUserProfile,
+  CrmUserProfile,
+  onAuthStateChanged,
+  User
+} from '../services/authService';
+import { auth } from '../firebase';
+import { syncGoogleContactsWithLeads } from '../services/contactsService';
 
 interface Props {
   leads: LeadData[];
@@ -1141,7 +1153,74 @@ const ColumnFilterPopover: React.FC<ColumnFilterPopoverProps> = ({
 
 // ─── Main Admin Panel Component ───────────────────────────────────────────────
 export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, onDeleteLead }) => {
-  const [viewMode, setViewMode] = useState<'spreadsheet' | 'crm' | 'campaigns'>('spreadsheet');
+  const [viewMode, setViewMode] = useState<'spreadsheet' | 'crm' | 'campaigns' | 'calendar'>('spreadsheet');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<CrmUserProfile | null>(null);
+  const [isSyncingContacts, setIsSyncingContacts] = useState<boolean>(false);
+  const [tokenPresent, setTokenPresent] = useState<boolean>(() => !!getStoredAccessToken());
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setCurrentUser(u);
+      setTokenPresent(!!getStoredAccessToken());
+      if (u) {
+        const prof = await getUserProfile(u.uid, u.email);
+        setUserProfile(prof);
+      } else {
+        setUserProfile(null);
+      }
+    });
+
+    const handleTokenUpdated = () => {
+      setTokenPresent(!!getStoredAccessToken());
+    };
+    window.addEventListener('zentry_google_token_updated', handleTokenUpdated);
+
+    return () => {
+      unsub();
+      window.removeEventListener('zentry_google_token_updated', handleTokenUpdated);
+    };
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    try {
+      const authRes = await loginWithGoogle();
+      setCurrentUser(authRes.user);
+      setUserProfile(authRes.profile);
+      setTokenPresent(true);
+    } catch (err: any) {
+      alert('Error al iniciar sesión con Google: ' + err.message);
+    }
+  };
+
+  const handleSyncGoogleContacts = async () => {
+    let token = getStoredAccessToken();
+    if (!token) {
+      try {
+        const authRes = await loginWithGoogle();
+        token = authRes.accessToken || getStoredAccessToken();
+        setTokenPresent(true);
+      } catch (err: any) {
+        alert('Error al autenticar con Google: ' + err.message);
+        return;
+      }
+    }
+
+    if (!token) {
+      alert('No se pudo obtener el token de acceso de Google.');
+      return;
+    }
+
+    setIsSyncingContacts(true);
+    try {
+      const res = await syncGoogleContactsWithLeads(leads, token);
+      alert(`Sincronización completada exitosamente:\n• Contactos en Google: ${res.totalGoogleContacts}\n• Coincidencias en CRM: ${res.matchedCount}\n• Nombres actualizados: ${res.updatedLeads.length}`);
+    } catch (err: any) {
+      alert('Error sincronizando contactos: ' + err.message);
+    } finally {
+      setIsSyncingContacts(false);
+    }
+  };
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
@@ -1780,7 +1859,51 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setViewMode('calendar')}
+              style={{
+                border: 'none',
+                padding: '5px 10px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                background: viewMode === 'calendar' ? '#6366F1' : 'transparent',
+                color: viewMode === 'calendar' ? '#FFFFFF' : '#4F46E5',
+                boxShadow: viewMode === 'calendar' ? '0 1px 3px rgba(99,102,241,0.28)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+              title="Vista de Calendario y Demos Semanales"
+            >
+              <span>📅</span>
+              <span>Agenda Demos</span>
+            </button>
           </div>
+
+          {/* Sincronización Google Contacts & OAuth */}
+          <button
+            onClick={handleSyncGoogleContacts}
+            disabled={isSyncingContacts}
+            style={{
+              background: tokenPresent ? '#EFF6FF' : '#FFFFFF',
+              color: tokenPresent ? '#2563EB' : '#475569',
+              border: '1px solid #CBD5E1',
+              borderRadius: '8px',
+              padding: '5px 10px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.76rem',
+              fontWeight: 700
+            }}
+            title={tokenPresent ? "Sincronizar nombres con Google Contacts (People API)" : "Conectar cuenta de Google"}
+          >
+            <span>{isSyncingContacts ? '⏳' : (tokenPresent ? '🔄' : '👤')}</span>
+            <span>{isSyncingContacts ? 'Sincronizando...' : (tokenPresent ? 'Sync Contactos' : 'Conectar Google')}</span>
+          </button>
 
           {/* Toggle Expand all texts button (SVG only) */}
           {viewMode === 'spreadsheet' && (
@@ -2710,6 +2833,29 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
             onSelectTab={handleSelectTab}
             isStandalone={true}
             onClose={() => setViewMode('spreadsheet')}
+          />
+        </div>
+      )}
+
+      {/* ── VIEW 4: CALENDARIO GOOGLE (Demos Semanales ZentryOS) ───────────── */}
+      {viewMode === 'calendar' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 125px)', background: '#FFFFFF', borderRadius: '12px 12px 0 0', overflow: 'hidden', border: '1px solid #E2E8F0', borderBottom: 'none' }}>
+          <ZentryCalendarView
+            leads={effectiveLeads}
+            onConnectGoogle={handleGoogleLogin}
+            currentUserEmail={currentUser?.email || undefined}
+            onUpdateLeadStatus={async (leadId, newStatus, dateStr) => {
+              const target = leads.find((l) => l.id === leadId);
+              if (target) {
+                const updated = {
+                  ...target,
+                  estadoCrm: newStatus as any,
+                  obserCalls: `${target.obserCalls ? target.obserCalls + ' | ' : ''}Demo agendada: ${dateStr}`
+                };
+                onUpdateLead(updated);
+                await saveCloudLead(updated);
+              }
+            }}
           />
         </div>
       )}

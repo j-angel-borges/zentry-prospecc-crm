@@ -240,6 +240,8 @@ export interface CustomCampaignTemplate {
   createdAt?: number;
 }
 
+const LS_CAMPAIGN_DRAFT = 'zentry_campaign_draft_v1';
+
 const DEFAULT_MESSAGE_TEMPLATES: CustomCampaignTemplate[] = [
   {
     id: 'tpl-expo-maternidad',
@@ -277,7 +279,30 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
 }) => {
   // Top navigation tabs: Wizard | Outbox Queue | Extension Preview
   const [activeSection, setActiveSection] = useState<'wizard' | 'queue' | 'preview'>('wizard');
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Recuperar borrador si existe en localStorage
+  const savedDraft = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(LS_CAMPAIGN_DRAFT);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.campaignName || parsed.initialMessage || (parsed.selectedIds && parsed.selectedIds.length > 0))) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading campaign draft:', e);
+    }
+    return null;
+  }, []);
+
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(() => {
+    if (savedDraft?.wizardStep && savedDraft.wizardStep >= 1 && savedDraft.wizardStep <= 4) {
+      return savedDraft.wizardStep as 1 | 2 | 3 | 4;
+    }
+    return 1;
+  });
 
   // Extra manually added leads (stored locally & synced to cloud)
   const [extraLeads, setExtraLeads] = useState<LeadData[]>(() => {
@@ -299,15 +324,28 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   const [audienceMode, setAudienceMode] = useState<'tab' | 'manual'>(
     preselectedLeadIds.length > 0 ? 'manual' : 'tab'
   );
-  const [selectedOriginTab, setSelectedOriginTab] = useState<string>(
-    activeSourceTab || initialSourceTab || 'Expo M (JA)'
-  );
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(preselectedLeadIds));
+  const [selectedOriginTab, setSelectedOriginTab] = useState<string>(() => {
+    if (savedDraft?.selectedOriginTab) return savedDraft.selectedOriginTab;
+    return activeSourceTab || initialSourceTab || 'Expo M (JA)';
+  });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    if (savedDraft?.selectedIds && Array.isArray(savedDraft.selectedIds)) {
+      return new Set(savedDraft.selectedIds);
+    }
+    return new Set(preselectedLeadIds);
+  });
   const [audienceSearch, setAudienceSearch] = useState<string>('');
   const audTableRef = useRef<HTMLDivElement | null>(null);
+  const isInitialMount = useRef<boolean>(true);
 
   // Sync selected origin tab when activeSourceTab changes from parent bottom tabs
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      if (savedDraft?.selectedOriginTab) {
+        return; // Respetar la pestaña del borrador al montar
+      }
+    }
     if (activeSourceTab !== undefined) {
       setSelectedOriginTab(activeSourceTab);
       setAudienceMode('tab');
@@ -547,25 +585,30 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   };
 
   // Step 2: Message & Follow-ups State
-  const [campaignName, setCampaignName] = useState<string>(
-    `Campaña Zentry — ${initialSourceTab || 'Expo M'}`
-  );
-  const [initialMessage, setInitialMessage] = useState<string>(
-    templates[0]?.body || DEFAULT_MESSAGE_TEMPLATES[0].body
-  );
-  const [followUps, setFollowUps] = useState<FollowUpStep[]>([
-    {
-      id: 'fu-1',
-      stepNumber: 1,
-      delayValue: 24,
-      delayUnit: 'hours',
-      delayLabel: '24 hours',
-      delayMs: 24 * 3600 * 1000,
-      customDateTime: toLocalDateTimeInputValue(Date.now() + 24 * 3600 * 1000),
-      messageTemplate:
-        'Hola {First Name}, solo pasaba por aquí para saber si pudiste ver mi mensaje anterior sobre ZentryOS. Quedo atento por si tienes alguna consulta.'
+  const [campaignName, setCampaignName] = useState<string>(() => {
+    return savedDraft?.campaignName || `Campaña Zentry — ${initialSourceTab || 'Expo M'}`;
+  });
+  const [initialMessage, setInitialMessage] = useState<string>(() => {
+    return savedDraft?.initialMessage || templates[0]?.body || DEFAULT_MESSAGE_TEMPLATES[0].body;
+  });
+  const [followUps, setFollowUps] = useState<FollowUpStep[]>(() => {
+    if (savedDraft?.followUps && Array.isArray(savedDraft.followUps) && savedDraft.followUps.length > 0) {
+      return savedDraft.followUps;
     }
-  ]);
+    return [
+      {
+        id: 'fu-1',
+        stepNumber: 1,
+        delayValue: 24,
+        delayUnit: 'hours',
+        delayLabel: '24 hours',
+        delayMs: 24 * 3600 * 1000,
+        customDateTime: toLocalDateTimeInputValue(Date.now() + 24 * 3600 * 1000),
+        messageTemplate:
+          'Hola {First Name}, solo pasaba por aquí para saber si pudiste ver mi mensaje anterior sobre ZentryOS. Quedo atento por si tienes alguna consulta.'
+      }
+    ];
+  });
   const [stopOnReply, setStopOnReply] = useState<boolean>(true);
   const [previewLeadIndex, setPreviewLeadIndex] = useState<number>(0);
   const [campaignAttachments, setCampaignAttachments] = useState<
@@ -594,15 +637,26 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   };
 
   // Step 3: Timing & Anti-Ban Jitter State
-  const [timingMode, setTimingMode] = useState<'now' | 'scheduled'>('now');
+  const [timingMode, setTimingMode] = useState<'now' | 'scheduled'>(() => {
+    return savedDraft?.timingMode || 'now';
+  });
   const [scheduledDate, setScheduledDate] = useState<string>(() => {
+    if (savedDraft?.scheduledDate) return savedDraft.scheduledDate;
     const d = new Date(Date.now() + 3600 * 1000);
     return d.toISOString().slice(0, 10);
   });
-  const [scheduledTime, setScheduledTime] = useState<string>('18:30');
-  const [jitterMinSec, setJitterMinSec] = useState<number>(45);
-  const [jitterMaxSec, setJitterMaxSec] = useState<number>(110);
-  const [dailyBatchLimit, setDailyBatchLimit] = useState<number>(35);
+  const [scheduledTime, setScheduledTime] = useState<string>(() => {
+    return savedDraft?.scheduledTime || '18:30';
+  });
+  const [jitterMinSec, setJitterMinSec] = useState<number>(() => {
+    return savedDraft?.jitterMinSec || 45;
+  });
+  const [jitterMaxSec, setJitterMaxSec] = useState<number>(() => {
+    return savedDraft?.jitterMaxSec || 110;
+  });
+  const [dailyBatchLimit, setDailyBatchLimit] = useState<number>(() => {
+    return savedDraft?.dailyBatchLimit || 35;
+  });
 
   // Step 4 & Live Firestore State
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -629,6 +683,55 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
       unsubOutbox();
     };
   }, []);
+
+  // Auto-guardado en segundo plano de borrador para evitar pérdida de progreso al cambiar de vista o cerrar
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const draftData = {
+        wizardStep,
+        campaignName,
+        selectedOriginTab,
+        selectedIds: Array.from(selectedIds),
+        initialMessage,
+        followUps,
+        timingMode,
+        scheduledDate,
+        scheduledTime,
+        jitterMinSec,
+        jitterMaxSec,
+        dailyBatchLimit,
+        updatedAt: Date.now()
+      };
+      localStorage.setItem(LS_CAMPAIGN_DRAFT, JSON.stringify(draftData));
+    } catch (e) {
+      console.warn('Error guardando borrador:', e);
+    }
+  }, [
+    wizardStep,
+    campaignName,
+    selectedOriginTab,
+    selectedIds,
+    initialMessage,
+    followUps,
+    timingMode,
+    scheduledDate,
+    scheduledTime,
+    jitterMinSec,
+    jitterMaxSec,
+    dailyBatchLimit
+  ]);
+
+  const handleDiscardDraft = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(LS_CAMPAIGN_DRAFT);
+    }
+    setWizardStep(1);
+    setCampaignName(`Campaña Zentry — ${initialSourceTab || 'Expo M'}`);
+    setInitialMessage(templates[0]?.body || DEFAULT_MESSAGE_TEMPLATES[0].body);
+    setSelectedIds(new Set(preselectedLeadIds));
+    showToast('Borrador descartado');
+  };
 
   // Listen for CRM selection events from parent/iframe postMessage
   useEffect(() => {
@@ -884,6 +987,11 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
       );
     } catch (e) {}
 
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(LS_CAMPAIGN_DRAFT);
+      } catch {}
+    }
     setIsSaving(false);
     setSaveSuccessBanner(
       `Campaña "${result.campaign.name}" guardada • ${result.campaign.totalContacts} contactos, ${result.outboxItems.length} mensajes en cola.`
@@ -1154,6 +1262,42 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Banner de Borrador Restaurado */}
+      {savedDraft && (
+        <div
+          style={{
+            background: '#FEF3C7',
+            borderBottom: '1px solid #FCD34D',
+            padding: '6px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '0.74rem',
+            color: '#92400E'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>📝</span>
+            <span><strong>Borrador recuperado:</strong> Se han restaurado tus avances y configuración de campaña previa.</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleDiscardDraft}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#B45309',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              textDecoration: 'underline'
+            }}
+          >
+            Descartar borrador
+          </button>
+        </div>
+      )}
 
       {/* Sub-bar with Stepper when in Wizard mode */}
       {activeSection === 'wizard' && (
