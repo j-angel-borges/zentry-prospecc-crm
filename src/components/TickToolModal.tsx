@@ -540,7 +540,10 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     const norm = normalizePeruPhone(phone);
     const finalPhone = (norm.valid ? norm.formatted : phone.trim()) || '';
     const finalName = name && name.trim() ? name.trim() : `Contacto ${cleanDigits.slice(-9)}`;
-    const finalTab = tab || (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab) || 'Expo M (JA)';
+    // Asignar el prospecto directo a la pestaña activa para garantizar que aparezca visible de inmediato
+    const finalTab = (tab && tab !== 'Directo / Manual')
+      ? tab
+      : (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab) || 'Expo M (JA)';
     const finalDistrito = district && district.trim() ? district.trim() : 'Lima';
     const newId = `lead-manual-${Date.now()}-${cleanDigits.slice(-4)}`;
 
@@ -775,17 +778,19 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   // Filtered and sorted leads for Step 1 table (strictly respects selected bottom tab filter!)
   const visibleAudienceLeads = useMemo(() => {
     const q = audienceSearch.trim().toLowerCase();
+    const cleanDigits = q.replace(/\D/g, '');
     const filtered = allLeads.filter((l) => {
-      if (selectedOriginTab !== '__ALL__' && getLeadTab(l) !== selectedOriginTab) {
+      // Si el usuario escribe una búsqueda, buscar a través de TODAS las pestañas para no ocultar contactos directos ni números existentes
+      if (!q && selectedOriginTab !== '__ALL__' && getLeadTab(l) !== selectedOriginTab) {
         return false;
       }
       if (!q) return true;
-      return (
-        (l.nombreMadre || '').toLowerCase().includes(q) ||
-        (l.celular || '').toLowerCase().includes(q) ||
-        getLeadTab(l).toLowerCase().includes(q) ||
-        (l.distrito || '').toLowerCase().includes(q)
-      );
+      const lPhoneDigits = (l.celular || '').replace(/\D/g, '');
+      const matchPhone = cleanDigits.length >= 4 && lPhoneDigits.includes(cleanDigits);
+      const matchName = (l.nombreMadre || '').toLowerCase().includes(q);
+      const matchTab = getLeadTab(l).toLowerCase().includes(q);
+      const matchDist = (l.distrito || '').toLowerCase().includes(q);
+      return matchPhone || matchName || matchTab || matchDist;
     });
     return filtered.slice().sort((a, b) => {
       const aSel = selectedIds.has(a.id) ? 1 : 0;
@@ -977,6 +982,13 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
       jitterMaxSec,
       dailyBatchLimit
     });
+
+    // Actualización optimista local inmediata para que la cola se refleje al 100% al instante sin depender del tiempo de respuesta del listener
+    setCampaigns((prev) => [result.campaign, ...prev.filter((c) => c.id !== result.campaign.id)]);
+    setOutbox((prev) => [...result.outboxItems, ...prev.filter((o) => o.campaignId !== result.campaign.id)]);
+    setOutboxCampaignFilter('all');
+    setOutboxStatusFilter('all');
+    setOutboxSearch('');
 
     // Notify Chrome extension if installed + push full outbox items with attachments
     try {
