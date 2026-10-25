@@ -35,6 +35,20 @@ const toLocalDateTimeInputValue = (epochMs: number): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+const safeFormatTime = (val?: number | string | null): string => {
+  if (!val) return '';
+  const d = typeof val === 'number' ? new Date(val) : new Date(String(val));
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+const safeFormatDateTime = (val?: number | string | null): string => {
+  if (!val) return '';
+  const d = typeof val === 'number' ? new Date(val) : new Date(String(val));
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
 const DELAY_PRESETS: Array<{
   label: string;
   displayLabel: string;
@@ -1024,9 +1038,13 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
         localStorage.removeItem(LS_CAMPAIGN_DRAFT);
       } catch {}
     }
+    const timeTimingDetail = timingMode === 'scheduled' && scheduledDate && scheduledTime
+      ? ` • Inicio programado: ${scheduledDate.split('-').reverse().join('/')} ${scheduledTime} hrs`
+      : ` • Envíos iniciados: ${new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}`;
+
     setIsSaving(false);
     setSaveSuccessBanner(
-      `Campaña "${result.campaign.name}" guardada • ${result.campaign.totalContacts} contactos, ${result.outboxItems.length} mensajes en cola.`
+      `Campaña "${result.campaign.name}" guardada • ${result.campaign.totalContacts} contactos, ${result.outboxItems.length} mensajes en cola${timeTimingDetail}.`
     );
     setTimeout(() => {
       setActiveSection('queue');
@@ -3009,6 +3027,22 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                       Máx. {dailyBatchLimit} envíos/día • {stopOnReply ? 'Auto-Stop ON' : 'Auto-Stop OFF'}
                     </div>
                   </div>
+
+                  <div style={{ padding: '12px', borderRadius: '10px', background: timingMode === 'scheduled' ? '#EFF6FF' : '#F8FAFC', border: timingMode === 'scheduled' ? '1.5px solid #93C5FD' : '1px solid #E2E8F0' }}>
+                    <div style={{ fontSize: '0.7rem', color: timingMode === 'scheduled' ? '#1E40AF' : '#64748B', fontWeight: 700 }}>
+                      Hora / Momento de Envío
+                    </div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: timingMode === 'scheduled' ? '#1D4ED8' : '#0F172A' }}>
+                      {timingMode === 'scheduled'
+                        ? `${scheduledDate.split('-').reverse().join('/')} ${scheduledTime} hrs`
+                        : 'Envío Inmediato'}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: timingMode === 'scheduled' ? '#2563EB' : '#059669', fontWeight: 600 }}>
+                      {timingMode === 'scheduled'
+                        ? `⏰ Programada para activarse a las ${scheduledTime} hrs`
+                        : `⚡ Despacho activo desde ${new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}`}
+                    </div>
+                  </div>
                 </div>
 
                 <div style={{ padding: '12px 14px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: '0.78rem' }}>
@@ -3177,11 +3211,27 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                           onClick={() => setOutboxCampaignFilter(isFiltered ? 'all' : cmp.id)}
                           style={{ cursor: 'pointer', flex: 1 }}
                         >
-                          <strong style={{ fontSize: '0.8rem', color: '#0F172A' }}>
-                            {cmp.name}
-                          </strong>
-                          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
-                            {cmp.totalContacts} contactos • {cmp.jitterMinSec}s–{cmp.jitterMaxSec}s • Lote {cmp.dailyBatchLimit}/día
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '0.82rem', color: '#0F172A' }}>
+                              {cmp.name}
+                            </strong>
+                            {cmp.scheduledStartAt && cmp.timingMode === 'scheduled' ? (
+                              <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: '#EFF6FF', color: '#1D4ED8', fontWeight: 800 }}>
+                                ⏰ Programada: {new Date(cmp.scheduledStartAt).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: '#ECFDF5', color: '#059669', fontWeight: 800 }}>
+                                ⚡ Envío: Inmediato ({cmp.createdAt ? new Date(cmp.createdAt).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) : 'Activo'})
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '2px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            <span>{cmp.totalContacts} contactos • {cmp.jitterMinSec}s–{cmp.jitterMaxSec}s • Lote {cmp.dailyBatchLimit}/día</span>
+                            {cmp.createdAt && (
+                              <span style={{ color: '#94A3B8' }}>
+                                • Registrada: {new Date(cmp.createdAt).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -3543,8 +3593,19 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                                       : '#2563EB'
                                 }}
                               >
-                                {item.status}
+                                {item.status === 'dispatched' ? 'Enviado' : item.status === 'replied' ? 'Respondido' : item.status === 'cancelled' ? 'Cancelado' : 'Pendiente'}
                               </span>
+                              <div style={{ fontSize: '0.65rem', color: '#64748B', marginTop: '3px', whiteSpace: 'nowrap' }}>
+                                {item.status === 'dispatched' && (item.dispatchedAt || item.updatedAt) ? (
+                                  <span style={{ color: '#059669', fontWeight: 700 }}>🕒 Enviado: {safeFormatTime(item.dispatchedAt || item.updatedAt)}</span>
+                                ) : item.status === 'replied' && (item.repliedAt || item.updatedAt) ? (
+                                  <span style={{ color: '#533B87', fontWeight: 700 }}>💬 Respondido: {safeFormatTime(item.repliedAt || item.updatedAt)}</span>
+                                ) : item.status === 'cancelled' && (item.cancelledAt || item.updatedAt) ? (
+                                  <span style={{ color: '#DC2626' }}>🛑 Cancelado: {safeFormatTime(item.cancelledAt || item.updatedAt)}</span>
+                                ) : item.scheduledFor ? (
+                                  <span>📅 Previsto: {safeFormatDateTime(item.scheduledFor)}</span>
+                                ) : null}
+                              </div>
                             </td>
                             <td style={{ padding: '8px' }}>
                               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
