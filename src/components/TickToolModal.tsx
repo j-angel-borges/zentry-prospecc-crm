@@ -329,10 +329,15 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     return activeSourceTab || initialSourceTab || 'Expo M (JA)';
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
-    if (savedDraft?.selectedIds && Array.isArray(savedDraft.selectedIds)) {
+    if (savedDraft?.selectedIds && Array.isArray(savedDraft.selectedIds) && savedDraft.selectedIds.length > 0) {
       return new Set(savedDraft.selectedIds);
     }
-    return new Set(preselectedLeadIds);
+    if (preselectedLeadIds && preselectedLeadIds.length > 0) {
+      return new Set(preselectedLeadIds);
+    }
+    const defaultTab = savedDraft?.selectedOriginTab || activeSourceTab || initialSourceTab || 'Expo M (JA)';
+    const matching = leads.filter((l) => (defaultTab === '__ALL__' ? true : (l.sheetTab || 'Expo M (JA)') === defaultTab));
+    return new Set(matching.map((l) => l.id));
   });
   const [audienceSearch, setAudienceSearch] = useState<string>('');
   const audTableRef = useRef<HTMLDivElement | null>(null);
@@ -533,9 +538,9 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
     }
 
     const norm = normalizePeruPhone(phone);
-    const finalPhone = norm.valid ? norm.formatted : phone.trim();
+    const finalPhone = (norm.valid ? norm.formatted : phone.trim()) || '';
     const finalName = name && name.trim() ? name.trim() : `Contacto ${cleanDigits.slice(-9)}`;
-    const finalTab = tab || (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab);
+    const finalTab = tab || (selectedOriginTab === '__ALL__' ? (initialSourceTab || 'Expo M (JA)') : selectedOriginTab) || 'Expo M (JA)';
     const finalDistrito = district && district.trim() ? district.trim() : 'Lima';
     const newId = `lead-manual-${Date.now()}-${cleanDigits.slice(-4)}`;
 
@@ -751,11 +756,13 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   const getLeadTab = (l: LeadData) => (l.sheetTab && l.sheetTab.trim() !== '' ? l.sheetTab : 'Expo M (JA)');
 
   useEffect(() => {
-    if (audienceMode === 'tab') {
+    if (audienceMode === 'tab' || selectedIds.size === 0) {
       const matching = allLeads.filter((l) =>
         selectedOriginTab === '__ALL__' ? true : getLeadTab(l) === selectedOriginTab
       );
-      setSelectedIds(new Set(matching.map((l) => l.id)));
+      if (matching.length > 0 && (audienceMode === 'tab' || selectedIds.size === 0)) {
+        setSelectedIds(new Set(matching.map((l) => l.id)));
+      }
       setCampaignName(
         `Campaña WS — ${selectedOriginTab === '__ALL__' ? 'Base General' : selectedOriginTab}`
       );
@@ -942,7 +949,11 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
 
   // Save Campaign to Firestore
   const handleSaveCampaign = async () => {
-    if (validSelectedLeads.length === 0) return;
+    if (validSelectedLeads.length === 0) {
+      alert('⚠️ No hay contactos válidos seleccionados para esta campaña. Por favor selecciona al menos un prospecto en el Paso 1.');
+      setWizardStep(1);
+      return;
+    }
     setIsSaving(true);
     setSaveSuccessBanner(null);
 
@@ -1411,8 +1422,10 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                               key={t}
                               type="button"
                               onClick={() => {
+                                const matching = allLeads.filter((l) => getLeadTab(l) === t);
                                 setSelectedOriginTab(t);
                                 setAudienceMode('tab');
+                                setSelectedIds(new Set(matching.map((l) => l.id)));
                                 onSelectTab?.(t);
                               }}
                               style={{
@@ -1453,6 +1466,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                           onClick={() => {
                             setSelectedOriginTab('__ALL__');
                             setAudienceMode('tab');
+                            setSelectedIds(new Set(allLeads.map((l) => l.id)));
                             onSelectTab?.('__ALL__');
                           }}
                           style={{
@@ -2989,6 +3003,56 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                     </div>
                   ))}
                 </div>
+
+                {validSelectedLeads.length === 0 && (
+                  <div
+                    style={{
+                      background: '#FEF2F2',
+                      border: '1.5px solid #FECACA',
+                      borderRadius: '10px',
+                      padding: '14px 18px',
+                      marginBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '14px'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#991B1B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>⚠️</span>
+                        <span>No hay contactos válidos seleccionados</span>
+                      </div>
+                      <div style={{ fontSize: '0.76rem', color: '#B91C1C', marginTop: '2px' }}>
+                        El borrador tenía 0 contactos o deseleccionaste todos. Haz clic a la derecha para recargar la audiencia de esta campaña.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWizardStep(1);
+                        setAudienceMode('tab');
+                        const matching = allLeads.filter((l) =>
+                          selectedOriginTab === '__ALL__' ? true : getLeadTab(l) === selectedOriginTab
+                        );
+                        setSelectedIds(new Set(matching.map((l) => l.id)));
+                      }}
+                      style={{
+                        background: '#DC2626',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '8px 14px',
+                        fontSize: '0.78rem',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Restablecer Contactos en Paso 1 ➔
+                    </button>
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <button

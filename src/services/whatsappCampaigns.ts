@@ -251,6 +251,26 @@ export function generateJitterDelayMs(minSec = 45, maxSec = 110): number {
  * Crea una campaña completa en `whatsapp_campaigns` y encola todos los mensajes
  * (iniciales + árbol de follow-ups) en `whatsapp_outbox` con Jitter y límite de lote diario.
  */
+function cleanPayload<T extends Record<string, any>>(obj: T): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => (typeof item === 'object' && item !== null ? cleanPayload(item) : item));
+  }
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        result[key] = cleanPayload(value);
+      } else if (Array.isArray(value)) {
+        result[key] = value.map((item) => (typeof item === 'object' && item !== null ? cleanPayload(item) : item));
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
 export async function createCampaignAndOutbox(params: {
   name: string;
   audienceSource: string;
@@ -424,10 +444,15 @@ export async function createCampaignAndOutbox(params: {
 
   // Persistir en Firestore: colección `whatsapp_campaigns` y `whatsapp_outbox`
   try {
-    await setDoc(doc(db, CAMPAIGNS_COLLECTION, campaign.id), campaign, { merge: true });
-    await Promise.all(
-      outboxItems.map((item) => setDoc(doc(db, OUTBOX_COLLECTION, item.id), item, { merge: true }))
-    );
+    const cleanCampaign = cleanPayload(campaign);
+    await setDoc(doc(db, CAMPAIGNS_COLLECTION, campaign.id), cleanCampaign, { merge: true });
+    const cleanItems = outboxItems.map((item) => cleanPayload(item));
+    for (let i = 0; i < cleanItems.length; i += 150) {
+      const batch = cleanItems.slice(i, i + 150);
+      await Promise.all(
+        batch.map((item) => setDoc(doc(db, OUTBOX_COLLECTION, item.id), item, { merge: true }))
+      );
+    }
   } catch (err) {
     console.warn('Error guardando campaña en Firestore (guardado en caché local):', err);
   }

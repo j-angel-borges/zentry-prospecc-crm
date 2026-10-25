@@ -213,11 +213,19 @@ export async function saveCloudLead(lead: LeadData): Promise<void> {
   if (!lead.id) return;
   const leadRef = doc(db, LEADS_COLLECTION, lead.id);
 
+  // Sanitize to remove any undefined properties that Firestore rejects
+  const sanitized: Record<string, any> = {};
+  for (const [k, v] of Object.entries(lead)) {
+    if (v !== undefined) {
+      sanitized[k] = v;
+    }
+  }
+
   try {
     await setDoc(
       leadRef,
       {
-        ...lead,
+        ...sanitized,
         updatedAt: serverTimestamp()
       },
       { merge: true }

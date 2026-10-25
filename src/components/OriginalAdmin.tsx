@@ -2831,6 +2831,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
             initialSourceTab={activeTab === '__ALL__' ? 'Expo M (JA)' : activeTab}
             activeSourceTab={activeTab}
             onSelectTab={handleSelectTab}
+            onAddManualLead={(newLead) => onUpdateLead(newLead)}
             isStandalone={true}
             onClose={() => setViewMode('spreadsheet')}
           />
