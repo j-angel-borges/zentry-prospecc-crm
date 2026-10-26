@@ -636,3 +636,26 @@ export async function deleteCampaignAndOutbox(campaignId: string): Promise<void>
     console.warn('Error eliminando campaña:', err);
   }
 }
+
+/**
+ * Elimina un mensaje individual de la cola outbox en Firestore
+ */
+export async function deleteOutboxItem(outboxId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, OUTBOX_COLLECTION, outboxId));
+  } catch (err) {
+    console.warn('Error eliminando mensaje individual de outbox:', err);
+  }
+}
+
+/**
+ * Elimina múltiples mensajes de la cola outbox en Firestore
+ */
+export async function deleteMultipleOutboxItems(outboxIds: string[]): Promise<void> {
+  try {
+    const deletions = outboxIds.map((id) => deleteDoc(doc(db, OUTBOX_COLLECTION, id)));
+    await Promise.all(deletions);
+  } catch (err) {
+    console.warn('Error eliminando múltiples mensajes de outbox:', err);
+  }
+}

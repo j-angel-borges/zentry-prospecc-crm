@@ -1608,6 +1608,14 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
     } catch (e) {
       console.warn('Error al borrar en la nube:', e);
     }
+    try {
+      const raw = localStorage.getItem('zentry_manual_leads_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const filtered = parsed.filter((l: any) => l.id !== leadId);
+        localStorage.setItem('zentry_manual_leads_v1', JSON.stringify(filtered));
+      }
+    } catch (_) {}
     setLocalEdits(prev => {
       const next = { ...prev };
       delete next[leadId];
@@ -2832,6 +2840,7 @@ export const OriginalAdmin: React.FC<Props> = ({ leads, onClose, onUpdateLead, o
             activeSourceTab={activeTab}
             onSelectTab={handleSelectTab}
             onAddManualLead={(newLead) => onUpdateLead(newLead)}
+            onDeleteLead={handleDelete}
             isStandalone={true}
             onClose={() => setViewMode('spreadsheet')}
           />

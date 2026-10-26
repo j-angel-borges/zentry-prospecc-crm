@@ -12,6 +12,8 @@ import {
   subscribeToCampaigns,
   subscribeToOutbox,
   updateOutboxItemStatus,
+  deleteOutboxItem,
+  deleteMultipleOutboxItems,
   handleInboundProspectReply,
   toggleCampaignStatus,
   deleteCampaignAndOutbox
@@ -27,6 +29,7 @@ interface TickToolModalProps {
   isStandalone?: boolean;
   onClose?: () => void;
   onAddManualLead?: (lead: LeadData) => void;
+  onDeleteLead?: (leadId: string) => void;
 }
 
 const toLocalDateTimeInputValue = (epochMs: number): string => {
@@ -289,7 +292,8 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   onSelectTab,
   isStandalone = false,
   onClose,
-  onAddManualLead
+  onAddManualLead,
+  onDeleteLead
 }) => {
   // Top navigation tabs: Wizard | Outbox Queue | Extension Preview
   const [activeSection, setActiveSection] = useState<'wizard' | 'queue' | 'preview'>('wizard');
@@ -470,6 +474,101 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
   const handleDispatchNextNow = () => {
     window.postMessage({ type: 'ZENTRY_TICKTOOL_DISPATCH_NOW' }, '*');
     showToast('Despacho activado en WhatsApp Web');
+  };
+
+  // Elimina un mensaje individual de la cola Outbox
+  const handleDeleteOutboxSingle = async (itemId: string) => {
+    const target = outbox.find((o) => o.id === itemId);
+    const targetName = target?.displayName || target?.normalizedPhone || 'este mensaje';
+    if (!window.confirm(`¿Estás seguro de remover el mensaje a "${targetName}" de la cola de envíos?`)) {
+      return;
+    }
+    const nextOutbox = outbox.filter((o) => o.id !== itemId);
+    setOutbox(nextOutbox);
+    setSelectedOutboxIds((prev) => {
+      const n = new Set(prev);
+      n.delete(itemId);
+      return n;
+    });
+    try {
+      await deleteOutboxItem(itemId);
+      window.postMessage(
+        {
+          type: 'ZENTRY_TICKTOOL_PUSH_QUEUE',
+          items: nextOutbox
+        },
+        '*'
+      );
+      showToast('Mensaje removido de la cola con éxito');
+    } catch (e) {
+      console.warn('Error eliminando mensaje de outbox:', e);
+      showToast('Mensaje removido localmente');
+    }
+  };
+
+  // Elimina en lote los mensajes seleccionados de la cola Outbox
+  const handleDeleteOutboxBulk = async () => {
+    const count = selectedOutboxIds.size;
+    if (count === 0) return;
+    if (!window.confirm(`¿Estás seguro de remover los ${count} mensajes seleccionados de la cola de envíos?`)) {
+      return;
+    }
+    const idsToDelete = Array.from(selectedOutboxIds);
+    const nextOutbox = outbox.filter((o) => !selectedOutboxIds.has(o.id));
+    setOutbox(nextOutbox);
+    setSelectedOutboxIds(new Set());
+    try {
+      await deleteMultipleOutboxItems(idsToDelete);
+      window.postMessage(
+        {
+          type: 'ZENTRY_TICKTOOL_PUSH_QUEUE',
+          items: nextOutbox
+        },
+        '*'
+      );
+      showToast(`${count} mensajes removidos de la cola`);
+    } catch (e) {
+      console.warn('Error eliminando lote de outbox:', e);
+      showToast(`${count} mensajes removidos localmente`);
+    }
+  };
+
+  // Remueve un prospecto de la audiencia de la campaña o de la pestaña activa
+  const handleRemoveLeadFromAudience = async (lead: LeadData) => {
+    const isManual = lead.id.startsWith('lead-manual-');
+    if (isManual) {
+      if (!window.confirm(`¿Deseas eliminar permanentemente al prospecto directo "${lead.nombreMadre}" (${lead.celular})?`)) {
+        return;
+      }
+      const nextExtras = extraLeads.filter((l) => l.id !== lead.id);
+      setExtraLeads(nextExtras);
+      try {
+        localStorage.setItem('zentry_manual_leads_v1', JSON.stringify(nextExtras));
+      } catch (_) {}
+      setSelectedIds((prev) => {
+        const n = new Set(prev);
+        n.delete(lead.id);
+        return n;
+      });
+      if (typeof onDeleteLead === 'function') {
+        onDeleteLead(lead.id);
+      }
+      showToast(`Prospecto directo "${lead.nombreMadre}" eliminado`);
+    } else {
+      const confirmed = window.confirm(
+        `¿Deseas deseleccionar y remover a "${lead.nombreMadre}" de esta campaña?
+
+(Aceptar = Remover de la campaña / Cancelar = Conservar)`
+      );
+      if (confirmed) {
+        setSelectedIds((prev) => {
+          const n = new Set(prev);
+          n.delete(lead.id);
+          return n;
+        });
+        showToast(`"${lead.nombreMadre}" quitado de la selección`);
+      }
+    }
   };
 
   const showToast = (msg: string) => {
@@ -1861,6 +1960,7 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                           <th style={{ padding: '8px 10px', textAlign: 'left' }}>Origen</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left' }}>Distrito</th>
                           <th style={{ padding: '8px 10px', textAlign: 'left' }}>Estado</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'center', width: '50px' }}>Acción</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1955,6 +2055,29 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                                     ✕ Inválido
                                   </span>
                                 )}
+                              </td>
+                              <td style={{ padding: '7px 10px', textAlign: 'center' }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveLeadFromAudience(lead);
+                                  }}
+                                  style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    color: '#EF4444',
+                                    cursor: 'pointer',
+                                    padding: '4px',
+                                    borderRadius: '4px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}
+                                  title={lead.id.startsWith('lead-manual-') ? 'Eliminar prospecto directo' : 'Quitar de la campaña'}
+                                >
+                                  <SvgIcon.Trash />
+                                </button>
                               </td>
                             </tr>
                           );
@@ -3600,6 +3723,27 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                   )}
                   <button
                     type="button"
+                    disabled={selectedOutboxIds.size === 0}
+                    onClick={handleDeleteOutboxBulk}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #EF4444',
+                      background: selectedOutboxIds.size > 0 ? '#FEF2F2' : '#F1F5F9',
+                      color: selectedOutboxIds.size > 0 ? '#DC2626' : '#94A3B8',
+                      fontSize: '0.73rem',
+                      fontWeight: 800,
+                      cursor: selectedOutboxIds.size > 0 ? 'pointer' : 'not-allowed',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                    title="Remover de la cola los mensajes seleccionados"
+                  >
+                    <SvgIcon.Trash /> Eliminar: {selectedOutboxIds.size}
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleSimulateNextDispatch}
                     style={{
                       padding: '6px 12px',
@@ -3888,6 +4032,26 @@ export const TickToolModal: React.FC<TickToolModalProps> = ({
                                     <SvgIcon.MessageSquare /> Respuesta
                                   </button>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteOutboxSingle(item.id)}
+                                  style={{
+                                    padding: '3px 7px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #FECACA',
+                                    background: '#FEF2F2',
+                                    color: '#DC2626',
+                                    fontSize: '0.68rem',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
+                                  }}
+                                  title="Remover este mensaje de la cola"
+                                >
+                                  <SvgIcon.Trash /> Eliminar
+                                </button>
                                 {isArchived ? (
                                   <button
                                     type="button"
